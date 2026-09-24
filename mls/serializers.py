@@ -2,11 +2,15 @@
 from rest_framework import serializers
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema_field
+from django.db.models import Prefetch, prefetch_related_objects
+from django.db.models.manager import BaseManager
+from django.utils import timezone
 from mls.models import (
     Property,
     CommunityListing,
     Room,
     Media,
+    OpenHouse,
     UserFeedback,
     UserFavorite,
     UserHistory,
@@ -44,6 +48,51 @@ class RoomSerializer(serializers.ModelSerializer):
         fields = ['room_type', 'room_level', 'room_length', 'room_width', 'room_dimensions']
 
 
+# `to_attr` names for the batched lookups below. PropertySerializer reads
+# them when present and falls back to per-row queries when absent, so single
+# serialisation (detail, nested) is unchanged.
+PRIMARY_MEDIA_ATTR = "primary_media"
+NEXT_OPEN_HOUSE_ATTR = "next_open_houses"
+
+
+def prefetch_property_summaries(properties):
+    """
+    Batch-load the summary's photo and next open house for many properties.
+
+    Without this each row cost 2-3 queries (preferred photo, first photo, next
+    open house): ~300 for one 100-pin map viewport. Sliced prefetches (Django
+    4.2+) fetch exactly one row per property in one query per relation.
+    """
+    if not properties:
+        return
+    prefetch_related_objects(
+        properties,
+        Prefetch(
+            "media",
+            # Preferred photo first, then feed order: the same pick as the
+            # per-row fallback in get_media.
+            queryset=Media.objects.order_by("-is_preferred", "order", "pk")[:1],
+            to_attr=PRIMARY_MEDIA_ATTR,
+        ),
+        Prefetch(
+            "open_houses",
+            queryset=OpenHouse.objects.filter(date__gte=timezone.localdate()).order_by(
+                "date", "start_time", "pk"
+            )[:1],
+            to_attr=NEXT_OPEN_HOUSE_ATTR,
+        ),
+    )
+
+
+class PropertyListSerializer(serializers.ListSerializer):
+    """Every `PropertySerializer(many=True)` prefetches its per-row relations."""
+
+    def to_representation(self, data):
+        items = list(data.all() if isinstance(data, BaseManager) else data)
+        prefetch_property_summaries([item for item in items if isinstance(item, Property)])
+        return super().to_representation(items)
+
+
 class PropertySerializer(serializers.ModelSerializer):
     # media = MediaSerializer(many=True, read_only=True)
     media = serializers.SerializerMethodField()
@@ -52,6 +101,7 @@ class PropertySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Property
+        list_serializer_class = PropertyListSerializer
         fields = [
             'listing_key', 'list_price',"property_sub_type",'city',"lease_amount", 'postal_code', 'unparsed_address',
             'bedrooms_total', 'bathrooms_total_integer', 'building_area_total',"listing_id","city","directions","city_region",
@@ -72,8 +122,10 @@ class PropertySerializer(serializers.ModelSerializer):
     def get_next_open_house(self, obj):
         from django.utils import timezone as _tz
         from datetime import datetime as _dt, time as _time
-        today = _tz.localdate()
-        events = obj.open_houses.filter(date__gte=today).order_by("date", "start_time")[:1]
+        events = getattr(obj, NEXT_OPEN_HOUSE_ATTR, None)
+        if events is None:
+            today = _tz.localdate()
+            events = obj.open_houses.filter(date__gte=today).order_by("date", "start_time")[:1]
         event = next(iter(events), None)
         if not event or not event.date:
             return None
@@ -92,39 +144,26 @@ class PropertySerializer(serializers.ModelSerializer):
         }
     @extend_schema_field(OpenApiTypes.OBJECT)
     def get_media(self, obj):
-        # 1. Try to get the preferred photo
-        preferred = obj.media.filter(is_preferred=True).first()
-        if preferred:
-            # Defensive check for media_file
-            url = preferred.media_url
-            if hasattr(preferred, 'media_file') and preferred.media_file:
-                try:
-                    url = preferred.media_file.url
-                except:
-                    pass
-            return {
-                "media_url": url,
-                "media_category": preferred.media_category,
-                "is_preferred": True
-            }
+        prefetched = getattr(obj, PRIMARY_MEDIA_ATTR, None)
+        if prefetched is not None:
+            media = prefetched[0] if prefetched else None
+        else:
+            # Unbatched: the preferred photo, else the first by feed order.
+            media = obj.media.filter(is_preferred=True).first() or obj.media.order_by('order').first()
+        if media is None:
+            return None
 
-        # 2. Fallback: get the first photo by order
-        first = obj.media.order_by('order').first()
-        if first:
-            url = first.media_url
-            if hasattr(first, 'media_file') and first.media_file:
-                try:
-                    url = first.media_file.url
-                except:
-                    pass
-            return {
-                "media_url": url,
-                "media_category": first.media_category,
-                "is_preferred": False
-            }
-
-        # 3. No photos
-        return None
+        url = media.media_url
+        if media.media_file:
+            try:
+                url = media.media_file.url
+            except Exception:
+                pass
+        return {
+            "media_url": url,
+            "media_category": media.media_category,
+            "is_preferred": media.is_preferred,
+        }
 
 class RoomDetailSerializer(serializers.ModelSerializer):
     class Meta:

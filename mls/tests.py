@@ -1242,3 +1242,95 @@ class ValuationAPITests(TestCase):
         self.assertTrue("estimate" in data)
         self.assertIn("sparse", data)
         self.assertTrue(data["beta"])
+
+
+class PropertySummaryPrefetchTests(TestCase):
+    """PropertySerializer(many=True) batches the photo and open-house lookups."""
+
+    def setUp(self):
+        from django.core.cache import cache
+
+        cache.clear()
+
+    def _make(self, key, **extra):
+        return Property.objects.create(
+            listing_key=key,
+            city="Toronto",
+            state_or_province="ON",
+            unparsed_address=f"{key} King St",
+            latitude=43.65,
+            longitude=-79.38,
+            list_price=900000,
+            standard_status="Active",
+            **extra,
+        )
+
+    def _serialize(self):
+        from mls.serializers import PropertySerializer
+
+        return PropertySerializer(Property.objects.order_by("listing_key"), many=True).data
+
+    def test_query_count_does_not_grow_with_rows(self):
+        from mls.models import Media
+
+        for i in range(3):
+            prop = self._make(f"row-{i}")
+            Media.objects.create(property=prop, media_url=f"https://img.test/{i}.jpg", order=1)
+
+        with self.assertNumQueries(3):  # rows + photos + open houses
+            self._serialize()
+
+        for i in range(3, 8):
+            prop = self._make(f"row-{i}")
+            Media.objects.create(property=prop, media_url=f"https://img.test/{i}.jpg", order=1)
+
+        with self.assertNumQueries(3):
+            self._serialize()
+
+    def test_picks_preferred_photo_then_feed_order_and_next_open_house(self):
+        from mls.models import Media, OpenHouse
+
+        preferred = self._make("a-preferred")
+        Media.objects.create(property=preferred, media_url="https://img.test/first.jpg", order=1)
+        Media.objects.create(property=preferred, media_url="https://img.test/best.jpg", order=5, is_preferred=True)
+
+        ordered = self._make("b-ordered")
+        Media.objects.create(property=ordered, media_url="https://img.test/second.jpg", order=2)
+        Media.objects.create(property=ordered, media_url="https://img.test/lead.jpg", order=1)
+
+        self._make("c-no-photo")
+
+        today = timezone.localdate()
+        OpenHouse.objects.create(property=preferred, open_house_key="past", date=today - timedelta(days=2))
+        OpenHouse.objects.create(property=preferred, open_house_key="later", date=today + timedelta(days=6))
+        OpenHouse.objects.create(property=preferred, open_house_key="soon", date=today + timedelta(days=1))
+
+        rows = {row["listing_key"]: row for row in self._serialize()}
+
+        self.assertEqual(rows["a-preferred"]["media"]["media_url"], "https://img.test/best.jpg")
+        self.assertTrue(rows["a-preferred"]["media"]["is_preferred"])
+        self.assertEqual(rows["b-ordered"]["media"]["media_url"], "https://img.test/lead.jpg")
+        self.assertIsNone(rows["c-no-photo"]["media"])
+
+        self.assertTrue(rows["a-preferred"]["next_open_house"]["start"].startswith(str(today + timedelta(days=1))))
+        self.assertIsNone(rows["b-ordered"]["next_open_house"])
+
+    def test_single_serialisation_still_works_without_prefetch(self):
+        from mls.models import Media
+        from mls.serializers import PropertySerializer
+
+        prop = self._make("solo")
+        Media.objects.create(property=prop, media_url="https://img.test/solo.jpg", order=1)
+
+        self.assertEqual(PropertySerializer(prop).data["media"]["media_url"], "https://img.test/solo.jpg")
+
+    def test_filter_endpoint_returns_photo(self):
+        from mls.models import Media
+
+        prop = self._make("endpoint")
+        Media.objects.create(property=prop, media_url="https://img.test/endpoint.jpg", order=1)
+
+        response = self.client.get("/api/mls/properties/filter/", {"limit": 10, "allow_fallback": "false"})
+        self.assertEqual(response.status_code, 200)
+        row = next(r for r in response.json()["results"] if r["listing_key"] == "endpoint")
+        self.assertEqual(row["media"]["media_url"], "https://img.test/endpoint.jpg")
