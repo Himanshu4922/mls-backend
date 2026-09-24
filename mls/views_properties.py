@@ -169,7 +169,10 @@ class PropertyFilterView(APIView):
         order_by = request.GET.get("orderby", "-modification_timestamp")
         if order_by.lstrip("-") == "list_price":
             order_by = order_by.replace("list_price", price_field)
-        final_qs, fallback_meta = _apply_fallback_pipeline(qs, request.GET, (order_by,))
+        # listing_key (unique) breaks ties. Price, beds and size sorts tie
+        # constantly, and Postgres may order tied rows differently per query,
+        # so offset paging repeated some homes across pages and skipped others.
+        final_qs, fallback_meta = _apply_fallback_pipeline(qs, request.GET, (order_by, "listing_key"))
 
         polygon = None
         if request.GET.get("polygon"):

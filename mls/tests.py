@@ -1334,3 +1334,19 @@ class PropertySummaryPrefetchTests(TestCase):
         self.assertEqual(response.status_code, 200)
         row = next(r for r in response.json()["results"] if r["listing_key"] == "endpoint")
         self.assertEqual(row["media"]["media_url"], "https://img.test/endpoint.jpg")
+
+    def test_offset_pages_over_tied_sort_keys_cover_every_row_once(self):
+        # Same price everywhere: only the listing_key tie-breaker orders them.
+        for key in ["tie-c", "tie-a", "tie-e", "tie-b", "tie-d"]:
+            self._make(key)
+
+        seen = []
+        for offset in (0, 2, 4):
+            response = self.client.get(
+                "/api/mls/properties/filter/",
+                {"limit": 2, "offset": offset, "orderby": "list_price", "allow_fallback": "false"},
+            )
+            self.assertEqual(response.status_code, 200)
+            seen += [row["listing_key"] for row in response.json()["results"]]
+
+        self.assertEqual(seen, ["tie-a", "tie-b", "tie-c", "tie-d", "tie-e"])
