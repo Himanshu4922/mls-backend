@@ -617,3 +617,27 @@ def _apply_map_filters_to_queryset(qs, params):
         if slugs:
             qs = qs.filter(community_listings__community_slug__in=slugs)
     return qs
+
+
+# UI home types -> DDF fields. The feed's property_sub_type is "Single Family"
+# for almost every home, so it cannot tell a condo from a detached house;
+# structure_type + property_attached_yn can (House/unattached 2,079,
+# House/attached 214, Apartment 1,007, Row / Townhouse 662 on 2026-09-25).
+HOME_TYPE_Q = {
+    "detached": Q(structure_type__iexact="House", property_attached_yn=False),
+    "semi": Q(structure_type__iexact="House", property_attached_yn=True),
+    "condo": Q(structure_type__iexact="Apartment"),
+    "townhouse": Q(structure_type__iexact="Row / Townhouse"),
+}
+
+
+def home_type_q(params):
+    """OR of the requested ``home_type`` values (repeatable or CSV); None when absent."""
+    raw_values = params.getlist("home_type") if hasattr(params, "getlist") else [params.get("home_type", "")]
+    combined = None
+    for raw in raw_values:
+        for value in str(raw or "").split(","):
+            q = HOME_TYPE_Q.get(value.strip().lower())
+            if q is not None:
+                combined = q if combined is None else combined | q
+    return combined

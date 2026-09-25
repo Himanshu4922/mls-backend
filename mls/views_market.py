@@ -38,6 +38,7 @@ from .services.query_helpers import (
     city_match_q,
     price_field_for,
     _apply_open_house_filters,
+    home_type_q,
 )
 
 
@@ -104,6 +105,9 @@ def _apply_facet_filters(qs, params) -> Any:
                 sub_types.append(cleaned)
     if sub_types:
         qs = qs.filter(property_sub_type__in=sub_types)
+    home_q = home_type_q(params)
+    if home_q is not None:
+        qs = qs.filter(home_q)
     # postal_code (CSV of FSAs / full codes) uses the same helper as the filter
     # view, so a postal-scoped listings page gets postal-scoped tab counts.
     if params.get("postal_code"):
@@ -375,7 +379,21 @@ SOLD_SELECT_FIELDS = [
     "CloseDate",
     "OriginalEntryTimestamp",
     "PropertySubType",
+    "CityRegion",
 ]
+
+# UI property-type keys -> AMPRE PropertySubType prefixes. Prefixes, not exact
+# values: TRREB stores "Semi-Detached " with a trailing space, which an ``eq``
+# filter silently misses.
+SOLD_PROPERTY_TYPES: dict[str, list[str]] = {
+    "detached": ["Detached"],
+    "semi": ["Semi-Detached"],
+    "townhouse": ["Att/Row/Townhouse"],
+    "condo_townhouse": ["Condo Townhouse"],
+    "condo_apartment": ["Condo Apartment"],
+}
+# Communities listed per city payload, most active first.
+MAX_COMMUNITIES = 60
 # Concurrent AMPRE requests per sold-trends build. Pages inside one query must
 # follow @odata.nextLink in order, so parallelism comes from splitting the
 # window into (city, month) chunks instead.
@@ -408,7 +426,13 @@ def _month_ranges(window_months: int, now: datetime) -> list[tuple[str, str]]:
     return ranges
 
 
-def _sold_filter(city: str, start: str, end: str, property_sub_types: list[str] | None) -> str:
+def _sold_filter(
+    city: str,
+    start: str,
+    end: str,
+    property_sub_types: list[str] | None,
+    community: str | None = None,
+) -> str:
     # ``startswith`` rather than ``eq``: AMPRE stores Toronto as district-coded
     # names ("Toronto C01", "Toronto W05", ...) and never as a bare "Toronto",
     # so an exact match found none of its closed sales. Ordinary cities
@@ -425,11 +449,13 @@ def _sold_filter(city: str, start: str, end: str, property_sub_types: list[str] 
         f"and CloseDate lt {end}"
     )
     if property_sub_types:
-        # OData ``in`` is not supported by AMPRE, so OR the exact values.
+        # OData ``in`` is not supported by AMPRE, so OR the prefixes.
         subtype_clause = " or ".join(
-            f"PropertySubType eq '{t.replace(chr(39), chr(39) * 2)}'" for t in property_sub_types
+            f"startswith(PropertySubType,'{t.replace(chr(39), chr(39) * 2)}')" for t in property_sub_types
         )
         expression += f" and ({subtype_clause})"
+    if community:
+        expression += f" and CityRegion eq '{community.replace(chr(39), chr(39) * 2)}'"
     return expression
 
 
@@ -437,6 +463,7 @@ def _fetch_sold_rows(
     cities: list[str],
     window_months: int,
     property_sub_types: list[str] | None = None,
+    community: str | None = None,
 ) -> list[dict[str, Any]]:
     """Pull closed listings for the given cities over the window.
 
@@ -451,7 +478,7 @@ def _fetch_sold_rows(
     from concurrent.futures import ThreadPoolExecutor
 
     chunks = [
-        _sold_filter(city, start, end, property_sub_types)
+        _sold_filter(city, start, end, property_sub_types, community)
         for city in cities
         for start, end in _month_ranges(window_months, timezone.now())
     ]
@@ -538,8 +565,14 @@ class MarketSoldTrendsAPIView(APIView):
             return Response({"scope": scope or "cities", "series": []})
 
         window_months = _parse_window_months(request.query_params.get("window"), default=12)
+        property_type = (request.query_params.get("property_type") or "").strip().lower()
+        sub_types = SOLD_PROPERTY_TYPES.get(property_type)
+        # Communities belong to one city; ignored for multi-city scopes.
+        community = (request.query_params.get("community") or "").strip()[:120] if len(cities) == 1 else ""
         try:
-            payload = get_sold_trends(cities, window_months, scope=scope)
+            payload = get_sold_trends(
+                cities, window_months, scope=scope, property_sub_types=sub_types, community=community or None
+            )
         except AmpreClientError as exc:
             logger.warning("sold-trends upstream failure for %s: %s", cities, exc)
             return Response(
@@ -557,7 +590,11 @@ SOLD_TRENDS_STALE_SECONDS = 60 * 60 * 24 * 7
 
 
 def _sold_trends_cache_keys(
-    cities: list[str], window_months: int, scope: str, property_sub_types: list[str] | None
+    cities: list[str],
+    window_months: int,
+    scope: str,
+    property_sub_types: list[str] | None,
+    community: str | None = None,
 ) -> tuple[str, str]:
     scope_label = scope or ("cities" if len(cities) > 1 else "city")
     digest = hashlib.md5(
@@ -565,9 +602,11 @@ def _sold_trends_cache_keys(
             "|".join(sorted(c.lower() for c in cities))
             + "#"
             + "|".join(sorted(t.lower() for t in property_sub_types or []))
+            + "#"
+            + (community or "").lower()
         ).encode()
     ).hexdigest()
-    base = f"sold-trends:v3:{scope_label}:{digest}:{window_months}"
+    base = f"sold-trends:v4:{scope_label}:{digest}:{window_months}"
     return base, f"{base}:last-good"
 
 
@@ -577,6 +616,7 @@ def get_sold_trends(
     scope: str = "",
     property_sub_types: list[str] | None = None,
     force_refresh: bool = False,
+    community: str | None = None,
 ) -> dict[str, Any]:
     """Cached sold-trends payload: fresh → rebuild → last good copy.
 
@@ -584,13 +624,13 @@ def get_sold_trends(
     payload exists. A payload served from the last-good copy carries
     ``stale: true`` plus its ``generated_at``, so the UI can say how old it is.
     """
-    fresh_key, stale_key = _sold_trends_cache_keys(cities, window_months, scope, property_sub_types)
+    fresh_key, stale_key = _sold_trends_cache_keys(cities, window_months, scope, property_sub_types, community)
     if not force_refresh:
         cached = cache.get(fresh_key)
         if cached is not None:
             return cached
     try:
-        payload = build_sold_trends_payload(cities, window_months, scope, property_sub_types)
+        payload = build_sold_trends_payload(cities, window_months, scope, property_sub_types, community)
     except AmpreClientError:
         last_good = cache.get(stale_key)
         if last_good is None:
@@ -606,10 +646,11 @@ def build_sold_trends_payload(
     window_months: int,
     scope: str = "",
     property_sub_types: list[str] | None = None,
+    community: str | None = None,
 ) -> dict[str, Any]:
     """Fetch from AMPRE and aggregate. Uncached; use get_sold_trends()."""
     scope_label = scope or ("cities" if len(cities) > 1 else "city")
-    rows = _fetch_sold_rows(cities, window_months, property_sub_types)
+    rows = _fetch_sold_rows(cities, window_months, property_sub_types, community)
     per_city_month, per_city_total = _bucket_sold_rows(rows, cities)
     canonical_by_norm = {c.lower(): c for c in cities}
 
@@ -640,7 +681,21 @@ def build_sold_trends_payload(
         "series": series,
         "generated_at": timezone.now().isoformat(),
         "stale": False,
+        "community": community or None,
     }
+
+    # The community picker's options, from the same rows: one city, unfiltered
+    # by community, so every community with sales in the window is listed.
+    if len(cities) == 1 and not community:
+        counts: dict[str, int] = defaultdict(int)
+        for row in rows:
+            name = (row.get("CityRegion") or "").strip()
+            if name:
+                counts[name] += 1
+        payload["communities"] = [
+            {"name": name, "units_sold": n}
+            for name, n in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:MAX_COMMUNITIES]
+        ]
 
     # GAP-08: GTA-wide (or multi-city) headline strip.
     if len(cities) > 1 or scope == "gta":
@@ -888,7 +943,10 @@ SOLD_TRENDS_WARM_CITIES: list[str] = [
 ]
 
 
-def warm_sold_trends(window_months: int = 12) -> dict[str, Any]:
+SOLD_TRENDS_WARM_WINDOWS = (12, 24, 36)
+
+
+def warm_sold_trends(windows: Iterable[int] = SOLD_TRENDS_WARM_WINDOWS) -> dict[str, Any]:
     """Rebuild the cached sold-trends payloads the site actually requests.
 
     The GTA scope takes ~40s against AMPRE, far past any request timeout, so
@@ -900,13 +958,15 @@ def warm_sold_trends(window_months: int = 12) -> dict[str, Any]:
         (city, [city], "") for city in SOLD_TRENDS_WARM_CITIES
     ]
     targets.append(("gta", list(GTA_CITIES), "gta"))
-    for label, cities, scope in targets:
-        try:
-            get_sold_trends(cities, window_months, scope=scope, force_refresh=True)
-            report["ok"].append(label)
-        except AmpreClientError as exc:
-            logger.warning("sold-trends warm failed for %s: %s", label, exc)
-            report["failed"][label] = str(exc)
+    for window_months in windows:
+        for label, cities, scope in targets:
+            key = f"{label}:{window_months}m"
+            try:
+                get_sold_trends(cities, window_months, scope=scope, force_refresh=True)
+                report["ok"].append(key)
+            except AmpreClientError as exc:
+                logger.warning("sold-trends warm failed for %s: %s", key, exc)
+                report["failed"][key] = str(exc)
     return report
 
 

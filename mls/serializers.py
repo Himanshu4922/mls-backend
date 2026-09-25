@@ -114,6 +114,8 @@ class PropertySerializer(serializers.ModelSerializer):
             'previous_list_price', 'price_change_timestamp',
             'next_open_house',
             'original_entry_timestamp',
+            # Home type: property_sub_type is "Single Family" for most rows.
+            'structure_type', 'property_attached_yn',
             'virtual_tour_url',
             # 'rooms'
         ]
@@ -381,12 +383,18 @@ class PublicListingSubmissionSerializer(serializers.ModelSerializer):
             # Assignment context that is safe to publish; the seller's purchase
             # price, deposit and assignment fee stay private to the reviewer.
             "project_name", "builder_name", "occupancy_date", "media",
+            "precon_property", "published_at",
         ]
 
+    published_at = serializers.DateTimeField(source="reviewed_at", read_only=True)
+
     def get_media(self, obj):
+        # Filter the prefetched rows in Python: .filter() here issued one
+        # query per submission and ignored prefetch_related("media").
         return [
             ListingSubmissionMediaSerializer(item, context=self.context).data
-            for item in obj.media.filter(media_type=ListingSubmissionMedia.MediaType.PHOTO)
+            for item in obj.media.all()
+            if item.media_type == ListingSubmissionMedia.MediaType.PHOTO
         ]
 
 

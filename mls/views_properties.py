@@ -22,6 +22,7 @@ from .services.query_helpers import (
     _apply_fallback_pipeline,
     _apply_open_house_filters,
     _build_property_filter_cache_key,
+    home_type_q,
 )
 from .views import (
     MAP_VIEW_CACHE_TTL_SECONDS,
@@ -161,6 +162,9 @@ class PropertyFilterView(APIView):
                     sub_type_values.append(cleaned)
         if sub_type_values:
             qs = qs.filter(property_sub_type__in=sub_type_values)
+        home_q = home_type_q(request.GET)
+        if home_q is not None:
+            qs = qs.filter(home_q)
 
         if all(k in request.GET for k in ["lat_min", "lat_max", "lng_min", "lng_max"]):
             qs = qs.annotate(

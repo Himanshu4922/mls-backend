@@ -925,13 +925,119 @@ class ListingSubmissionWithdrawAPIView(APIView):
         return Response(ListingSubmissionSerializer(submission, context={"request": request}).data)
 
 
+def _public_submissions():
+    return (
+        ListingSubmission.objects.filter(status=ListingSubmission.Status.APPROVED)
+        .prefetch_related("media")
+        .order_by("-reviewed_at", "-submitted_at", "-id")
+    )
+
+
+def _int_param(request, name):
+    try:
+        return int(request.query_params.get(name) or "")
+    except ValueError:
+        return None
+
+
 class PublicListingSubmissionListAPIView(APIView):
+    """Approved non-MLS listings (scope #13: Exclusive Assignments).
+
+    Filters: purpose (sale|rent|assignment), city, price_min, price_max,
+    beds_min, precon_property. Paginated: page, page_size (max 48).
+    """
+
     permission_classes = [AllowAny]
+    MAX_PAGE_SIZE = 48
 
     @extend_schema(tags=["Listing submissions"], summary="List approved non-MLS listings", auth=[])
     def get(self, request):
-        queryset = ListingSubmission.objects.filter(status=ListingSubmission.Status.APPROVED).prefetch_related("media")
-        return Response(PublicListingSubmissionSerializer(queryset, many=True, context={"request": request}).data)
+        queryset = _public_submissions()
+        purpose = (request.query_params.get("purpose") or "").strip().lower()
+        if purpose in ListingSubmission.Purpose.values:
+            queryset = queryset.filter(purpose=purpose)
+        city = (request.query_params.get("city") or "").strip()
+        if city:
+            queryset = queryset.filter(city__iexact=city)
+        price_min, price_max = _int_param(request, "price_min"), _int_param(request, "price_max")
+        if price_min is not None:
+            queryset = queryset.filter(asking_price__gte=price_min)
+        if price_max is not None:
+            queryset = queryset.filter(asking_price__lte=price_max)
+        beds_min = _int_param(request, "beds_min")
+        if beds_min is not None:
+            queryset = queryset.filter(bedrooms__gte=beds_min)
+        project = _int_param(request, "precon_property")
+        if project is not None:
+            queryset = queryset.filter(precon_property_id=project)
+
+        page = max(1, _int_param(request, "page") or 1)
+        page_size = min(max(1, _int_param(request, "page_size") or 12), self.MAX_PAGE_SIZE)
+        total = queryset.count()
+        rows = queryset[(page - 1) * page_size : page * page_size]
+        return Response(
+            {
+                "count": total,
+                "page": page,
+                "page_size": page_size,
+                "results": PublicListingSubmissionSerializer(rows, many=True, context={"request": request}).data,
+            }
+        )
+
+
+class PublicListingSubmissionDetailAPIView(APIView):
+    """One approved submission; 404 for anything not approved."""
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(tags=["Listing submissions"], summary="Get an approved non-MLS listing", auth=[])
+    def get(self, request, pk):
+        submission = _public_submissions().filter(pk=pk).first()
+        if not submission:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(PublicListingSubmissionSerializer(submission, context={"request": request}).data)
+
+
+def similar_public_submissions(submission, limit: int = 4) -> list:
+    """Approved listings like ``submission`` (scope #2e).
+
+    Scored: same pre-con project +3, same builder +1, same city +2, same
+    purpose required, and price closeness 0-1. The candidate pool is small
+    (approved user submissions), so scoring in Python is fine.
+    """
+    candidates = [
+        other
+        for other in _public_submissions().filter(purpose=submission.purpose).exclude(pk=submission.pk)[:300]
+    ]
+    price = float(submission.asking_price) if submission.asking_price else None
+
+    def score(other) -> float:
+        value = 0.0
+        if submission.precon_property_id and other.precon_property_id == submission.precon_property_id:
+            value += 3
+        if submission.builder_name and other.builder_name.strip().lower() == submission.builder_name.strip().lower():
+            value += 1
+        if other.city.strip().lower() == submission.city.strip().lower():
+            value += 2
+        if price and other.asking_price:
+            value += max(0.0, 1 - abs(float(other.asking_price) - price) / price)
+        return value
+
+    ranked = sorted(candidates, key=score, reverse=True)
+    return [other for other in ranked if score(other) > 0][:limit]
+
+
+class PublicListingSubmissionSimilarAPIView(APIView):
+    permission_classes = [AllowAny]
+
+    @extend_schema(tags=["Listing submissions"], summary="Similar approved non-MLS listings", auth=[])
+    def get(self, request, pk):
+        submission = _public_submissions().filter(pk=pk).first()
+        if not submission:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        limit = min(max(1, _int_param(request, "limit") or 4), 8)
+        rows = similar_public_submissions(submission, limit)
+        return Response(PublicListingSubmissionSerializer(rows, many=True, context={"request": request}).data)
 
 
 class WatchedOverviewAPIView(APIView):

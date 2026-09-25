@@ -146,6 +146,8 @@ def select_comps(
                     "city": row.city,
                     "distance_km": round(haversine_km(slat, slng, clat, clng), 3),
                     "source": "sold_proxy",
+                    # When it left Active: the proxy's stand-in for a sale date.
+                    "event_date": row.sold_at_proxy.date().isoformat() if row.sold_at_proxy else None,
                 }
             )
         comps = batch
@@ -201,6 +203,12 @@ def select_comps(
                     "city": row.city,
                     "distance_km": round(d, 3),
                     "source": "active_listing",
+                    # Listed date: an active comp has no sale.
+                    "event_date": (
+                        row.original_entry_timestamp.date().isoformat()
+                        if row.original_entry_timestamp
+                        else None
+                    ),
                 }
             )
             existing.add(row.listing_key)

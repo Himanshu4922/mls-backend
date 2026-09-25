@@ -3,6 +3,7 @@ from decimal import Decimal
 from typing import Any, Dict, Optional
 
 from django.db.models import Q
+from django.utils import timezone
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -16,6 +17,7 @@ from mls.services.valuation import (
     parse_lot_depth_from_dimensions,
     select_comps,
 )
+from mls.services.valuation.avm_report import confidence_stars, property_details, subject_details
 from mls.services.valuation.lot_dims import infer_lot_depth
 
 
@@ -250,6 +252,13 @@ class ValuationEstimateAPIView(APIView):
 
         sparse = len(comps) < 3 or point <= 0
 
+        # Full listing rows for the AVM report table (scope #10). A sold-proxy
+        # comp's listing may have been pruned from the catalogue; its details
+        # then come back empty and render as dashes.
+        comp_props = {
+            p.listing_key: p
+            for p in Property.objects.filter(listing_key__in=[c.get("listing_key") for c in comps if c.get("listing_key")])
+        }
         comps_out = []
         for c in comps:
             comps_out.append(
@@ -263,6 +272,8 @@ class ValuationEstimateAPIView(APIView):
                     "city": c.get("city") or "",
                     "distance_km": c.get("distance_km"),
                     "source": c.get("source"),
+                    "event_date": c.get("event_date"),
+                    "details": property_details(comp_props.get(c.get("listing_key"))),
                 }
             )
 
@@ -282,6 +293,9 @@ class ValuationEstimateAPIView(APIView):
                 "beta": True,
                 "sparse": sparse,
                 "confidence": hed.get("confidence"),
+                "confidence_stars": confidence_stars(hed.get("confidence"), len(comps)),
+                "valuation_date": timezone.localdate().isoformat(),
+                "subject_details": subject_details(prop, subject),
             },
             status=status.HTTP_200_OK,
         )

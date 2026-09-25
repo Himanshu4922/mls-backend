@@ -39,7 +39,13 @@ class SoldFilterTests(SimpleTestCase):
         expr = views_market._sold_filter("King's Town", "2026-01-01", "2026-02-01", ["Detached", "Semi-Detached"])
         self.assertIn("startswith(City,'King''s Town')", expr)
         self.assertIn("CloseDate lt 2026-02-01", expr)
-        self.assertIn("(PropertySubType eq 'Detached' or PropertySubType eq 'Semi-Detached')", expr)
+        self.assertIn(
+            "(startswith(PropertySubType,'Detached') or startswith(PropertySubType,'Semi-Detached'))", expr
+        )
+
+    def test_community_filter(self):
+        expr = views_market._sold_filter("Brampton", "2026-01-01", "2026-02-01", None, "Fletcher's Meadow")
+        self.assertIn("CityRegion eq 'Fletcher''s Meadow'", expr)
 
     def test_fetch_queries_every_city_month_chunk(self):
         with mock.patch.object(views_market, "fetch_property_page", return_value=[{"ListingKey": "x"}]) as fetch:
@@ -84,16 +90,17 @@ class GetSoldTrendsCacheTests(SimpleTestCase):
         self.assertNotEqual(a, b)
 
     def test_warm_reports_failures_and_continues(self):
-        def fake(cities, window, scope="", property_sub_types=None, force_refresh=False):
+        def fake(cities, window, scope="", property_sub_types=None, force_refresh=False, community=None):
             if cities == ["Toronto"]:
                 raise AmpreClientError("slow")
             return {}
 
         with mock.patch.object(views_market, "get_sold_trends", side_effect=fake):
             report = views_market.warm_sold_trends()
-        self.assertIn("Toronto", report["failed"])
-        self.assertIn("gta", report["ok"])
-        self.assertEqual(len(report["ok"]), len(views_market.SOLD_TRENDS_WARM_CITIES))
+        self.assertIn("Toronto:12m", report["failed"])
+        self.assertIn("gta:36m", report["ok"])
+        windows = len(views_market.SOLD_TRENDS_WARM_WINDOWS)
+        self.assertEqual(len(report["ok"]), len(views_market.SOLD_TRENDS_WARM_CITIES) * windows)
 
 
 class RequestMetaTests(SimpleTestCase):
