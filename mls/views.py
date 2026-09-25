@@ -74,6 +74,7 @@ from mls.services.map_aggregates import get_resolution_for_zoom
 from mls.services.query_helpers import city_match_q, cities_match_q, price_field_for
 from mls.services.inquiry_ghl import sync_inquiry_to_ghl
 from mls.services.inquiry_notifications import send_inquiry_email_to_realtor
+from mls.services import openai_client
 from mls.services.ai_listing_summary import (
     AISummaryGenerationError,
     generate_listing_summary,
@@ -1683,15 +1684,14 @@ class ListingAISummaryAPIView(APIView):
                 listing_key,
             )
 
-        gemini_api_key = os.environ.get("GEMINI_API_KEY", "").strip()
-        if not gemini_api_key:
+        if not openai_client.is_configured():
             return Response(
-                {"error": "GEMINI_API_KEY is not configured on backend"},
+                {"error": "OPENAI_API_KEY is not configured on backend"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
         try:
-            summary = generate_listing_summary(property_payload, gemini_api_key)
+            summary = generate_listing_summary(property_payload)
         except AISummaryGenerationError as exc:
             logger.error(
                 "AI summary generation failed for listing_key=%s: %s",

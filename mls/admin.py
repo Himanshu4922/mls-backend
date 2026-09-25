@@ -938,3 +938,24 @@ class EstateDepositPlanAdmin(admin.ModelAdmin):
         "title",
         "project__title",
     )
+
+
+from .models import AISearchLog  # noqa: E402
+
+
+@admin.register(AISearchLog)
+class AISearchLogAdmin(admin.ModelAdmin):
+    """What people typed into AI search, what it became, and what it cost."""
+
+    list_display = ("created_at", "query", "fallback", "cached", "model", "prompt_tokens", "completion_tokens", "latency_ms", "user")
+    list_filter = ("fallback", "cached", "model", "created_at")
+    search_fields = ("query", "user__email")
+    list_select_related = ("user",)
+    readonly_fields = [f.name for f in AISearchLog._meta.fields]
+    ordering = ("-created_at",)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return request.method in ("GET", "HEAD")

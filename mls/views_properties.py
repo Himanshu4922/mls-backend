@@ -16,6 +16,7 @@ from django.db.models.functions import Cast
 
 from .models import Property, SearchEvent
 from .serializers import PropertySerializer
+from .services.listing_embeddings import rank_ids
 from .services.query_helpers import (
     price_field_for,
     _apply_fallback_pipeline,
@@ -38,6 +39,22 @@ def _point_in_polygon(lat, lng, polygon):
             inside = not inside
         previous = current
     return inside
+
+
+# "Best match" scores at most this many filtered listings (newest first);
+# the result count is capped to it, which the rolling DDF cache rarely hits
+# once a city or price filter applies.
+RELEVANCE_POOL = 2000
+
+
+def _relevance_order(final_qs, text):
+    """Filtered listing ids ordered by similarity to ``text``, or None to keep
+    the normal order (no embeddings yet, or OpenAI unavailable)."""
+    if isinstance(final_qs, list):
+        ids = [prop.id for prop in final_qs[:RELEVANCE_POOL]]
+    else:
+        ids = list(final_qs.values_list("id", flat=True)[:RELEVANCE_POOL])
+    return rank_ids(ids, text)
 
 
 class PropertyFilterView(APIView):
@@ -64,7 +81,8 @@ class PropertyFilterView(APIView):
             OpenApiParameter("lng_max", OpenApiTypes.NUMBER, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("sold_days", OpenApiTypes.INT, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("modified_since", OpenApiTypes.DATETIME, OpenApiParameter.QUERY, required=False),
-            OpenApiParameter("orderby", OpenApiTypes.STR, OpenApiParameter.QUERY, required=False),
+            OpenApiParameter("orderby", OpenApiTypes.STR, OpenApiParameter.QUERY, required=False, description="A field (e.g. -list_price), or 'relevance' to rank by similarity to `semantic`."),
+            OpenApiParameter("semantic", OpenApiTypes.STR, OpenApiParameter.QUERY, required=False, description="Soft preferences from AI search (e.g. 'near subway, big backyard'). Used only with orderby=relevance; never filters."),
             OpenApiParameter("price_min", OpenApiTypes.INT, OpenApiParameter.QUERY, required=False, description="Minimum list_price."),
             OpenApiParameter("price_max", OpenApiTypes.INT, OpenApiParameter.QUERY, required=False, description="Maximum list_price."),
             OpenApiParameter("beds_min", OpenApiTypes.INT, OpenApiParameter.QUERY, required=False, description="Minimum bedrooms_total."),
@@ -167,6 +185,13 @@ class PropertyFilterView(APIView):
         qs = _apply_open_house_filters(qs, request.GET)
 
         order_by = request.GET.get("orderby", "-modification_timestamp")
+        # "relevance" (AI search's "Best match") ranks by description
+        # similarity after filtering; the SQL step keeps newest-first so
+        # equal scores and unembedded listings stay in a sensible order.
+        semantic = (request.GET.get("semantic") or "").strip()[:300]
+        rank_by_relevance = order_by == "relevance"
+        if rank_by_relevance:
+            order_by = "-modification_timestamp"
         if order_by.lstrip("-") == "list_price":
             order_by = order_by.replace("list_price", price_field)
         # listing_key (unique) breaks ties. Price, beds and size sorts tie
@@ -211,16 +236,31 @@ class PropertyFilterView(APIView):
                 and _point_in_polygon(float(prop.latitude), float(prop.longitude), polygon)
             ]
 
-        paginator = Paginator(final_qs, limit)
-        page = paginator.get_page((offset // limit) + 1)
+        ranked_ids = _relevance_order(final_qs, semantic) if rank_by_relevance and semantic else None
+        if ranked_ids is not None:
+            # Page over the ranked ids, then load just that page's rows from
+            # the filtered queryset so its annotations (rent price) survive.
+            paginator = Paginator(ranked_ids, limit)
+            page = paginator.get_page((offset // limit) + 1)
+            page_ids = list(page.object_list)
+            if isinstance(final_qs, list):
+                by_id = {prop.id: prop for prop in final_qs}
+            else:
+                by_id = {prop.id: prop for prop in final_qs.filter(id__in=page_ids)}
+            page_objects = [by_id[pid] for pid in page_ids if pid in by_id]
+        else:
+            paginator = Paginator(final_qs, limit)
+            page = paginator.get_page((offset // limit) + 1)
+            page_objects = page.object_list
 
-        serializer = PropertySerializer(page.object_list, many=True, context={"request": request})
+        serializer = PropertySerializer(page_objects, many=True, context={"request": request})
 
         payload = {
             "count": paginator.count,
             "next": offset + limit if page.has_next() else None,
             "previous": offset - limit if offset >= limit else None,
             "results": serializer.data,
+            "ranked_by_relevance": ranked_ids is not None,
             **fallback_meta,
         }
         cache.set(filter_cache_key, payload, MAP_VIEW_CACHE_TTL_SECONDS)

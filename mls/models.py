@@ -1648,3 +1648,61 @@ class OpenHouse(models.Model):
             f"{self.property.listing_key} "
             f"{self.date}"
         )
+
+class AISearchLog(models.Model):
+    """One natural-language search parse: what was asked and what it became.
+
+    For tuning the prompt and watching cost. Results themselves are logged by
+    the search view (SearchEvent) once the frontend runs the filters.
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="ai_search_logs",
+    )
+    session_key = models.CharField(max_length=64, blank=True)
+    query = models.CharField(max_length=300)
+    current_filters = models.JSONField(default=dict, blank=True)
+    filters = models.JSONField(default=dict, blank=True)
+    fallback = models.BooleanField(default=False)
+    cached = models.BooleanField(default=False)
+    error = models.TextField(blank=True)
+    model = models.CharField(max_length=80, blank=True)
+    prompt_tokens = models.PositiveIntegerField(default=0)
+    completion_tokens = models.PositiveIntegerField(default=0)
+    latency_ms = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["fallback", "created_at"])]
+
+    def __str__(self):
+        return f"AISearch<{self.query[:40]}>"
+
+
+class PropertyEmbedding(models.Model):
+    """OpenAI embedding of a listing's description, for "best match" ranking.
+
+    Stored as packed float32 bytes rather than a pgvector column: the rolling
+    DDF cache is small enough to score a filtered candidate set in numpy, and
+    this keeps the feature working on any database (tests run on SQLite).
+    ``text_hash`` lets the embed job skip listings whose text hasn't changed.
+    """
+
+    property = models.OneToOneField(
+        Property,
+        on_delete=models.CASCADE,
+        related_name="embedding",
+    )
+    model = models.CharField(max_length=80)
+    dimensions = models.PositiveIntegerField()
+    text_hash = models.CharField(max_length=64)
+    vector = models.BinaryField()
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Embedding<{self.property_id}:{self.model}>"

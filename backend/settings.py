@@ -379,6 +379,9 @@ REST_FRAMEWORK = {
         'otp_send': '5/hour',
         # Homepage newsletter / neighbour-alert sign-ups (homepage/views.py).
         'home_subscribe': '10/hour',
+        # AI search (mls/views_ai.py): each uncached parse is a paid OpenAI call.
+        'ai_search_anon': os.environ.get('AI_SEARCH_ANON_RATE', '30/hour'),
+        'ai_search_user': os.environ.get('AI_SEARCH_USER_RATE', '120/hour'),
     },
 }
 
