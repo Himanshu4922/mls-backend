@@ -706,6 +706,10 @@ class PropertyInquiry(models.Model):
     timeline = models.CharField(max_length=80, blank=True)
 
     page_url = models.URLField(max_length=2000, blank=True)
+    # Lead context (scope #18): the visitor's address and browser, forwarded
+    # by the frontend. Client-supplied, so context only, never trust.
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=512, blank=True)
     status = models.CharField(
         max_length=20,
         choices=STATUS_CHOICES,
@@ -743,6 +747,8 @@ class ListingViewEvent(models.Model):
         on_delete=models.SET_NULL,
         related_name="listing_view_events",
     )
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=512, blank=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     class Meta:
@@ -1534,6 +1540,9 @@ class ListingSubmission(models.Model):
     )
     reviewed_at = models.DateTimeField(null=True, blank=True)
     submitted_at = models.DateTimeField(null=True, blank=True)
+    # Recorded when the owner submits for review (scope #18).
+    submitted_ip = models.GenericIPAddressField(null=True, blank=True)
+    submitted_user_agent = models.CharField(max_length=512, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

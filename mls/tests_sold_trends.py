@@ -108,3 +108,59 @@ class RequestMetaTests(SimpleTestCase):
     def test_user_agent_is_truncated(self):
         request = RequestFactory().get("/", HTTP_USER_AGENT="x" * 2000)
         self.assertEqual(len(user_agent(request)), 512)
+
+
+@override_settings(CACHES=LOCMEM)
+class RecentSalesTests(SimpleTestCase):
+    def setUp(self):
+        cache.clear()
+
+    RAW = {
+        "ListingKey": "W1", "UnparsedAddress": "1 Main St, Brampton, ON", "City": "Brampton",
+        "PropertySubType": "Detached", "BedroomsTotal": 3, "BathroomsTotalInteger": 2,
+        "ClosePrice": 1_050_000, "ListPrice": 1_000_000, "CloseDate": "2026-09-20",
+        "OriginalEntryTimestamp": "2026-09-01T12:00:00Z",
+    }
+
+    def test_row_mapping(self):
+        row = views_market._recent_sale_row(self.RAW)
+        self.assertEqual(row["over_under_asking_pct"], 5.0)
+        self.assertEqual(row["days_on_market"], 19)
+        self.assertEqual(row["close_date"], "2026-09-20")
+
+    def test_placeholder_list_price_gives_no_ratio(self):
+        row = views_market._recent_sale_row({**self.RAW, "ListPrice": 1})
+        self.assertIsNone(row["over_under_asking_pct"])
+
+    def test_rows_without_close_price_are_dropped(self):
+        self.assertIsNone(views_market._recent_sale_row({**self.RAW, "ClosePrice": None}))
+
+    def test_anonymous_request_is_rejected(self):
+        from rest_framework.test import APIRequestFactory
+
+        request = APIRequestFactory().get("/api/mls/market/recent-sales/", {"city": "Brampton"})
+        response = views_market.RecentSalesAPIView.as_view()(request)
+        self.assertIn(response.status_code, (401, 403))
+
+    def test_paginates_cached_rows(self):
+        from types import SimpleNamespace
+        from rest_framework.test import APIRequestFactory, force_authenticate
+
+        rows = [views_market._recent_sale_row({**self.RAW, "ListingKey": f"W{i}"}) for i in range(30)]
+        request = APIRequestFactory().get("/x", {"city": "Brampton", "days": "30", "page": "2"})
+        force_authenticate(request, user=SimpleNamespace(is_authenticated=True))
+        with mock.patch.object(views_market, "get_recent_sales", return_value=rows):
+            response = views_market.RecentSalesAPIView.as_view()(request)
+        self.assertEqual(response.data["count"], 30)
+        self.assertEqual(len(response.data["results"]), 30 - views_market.RECENT_SALES_PAGE_SIZE)
+
+
+
+class ClientIpValidationTests(SimpleTestCase):
+    def test_spoofed_garbage_is_dropped(self):
+        request = RequestFactory().get("/", HTTP_X_FORWARDED_FOR="<script>", REMOTE_ADDR="10.0.0.2")
+        self.assertIsNone(client_ip(request))
+
+    def test_ipv6_is_normalised(self):
+        request = RequestFactory().get("/", HTTP_X_FORWARDED_FOR="2001:DB8::1")
+        self.assertEqual(client_ip(request), "2001:db8::1")

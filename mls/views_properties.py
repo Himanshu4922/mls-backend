@@ -266,7 +266,8 @@ class PropertyFilterView(APIView):
         cache.set(filter_cache_key, payload, MAP_VIEW_CACHE_TTL_SECONDS)
         query = (request.GET.get("search") or "").strip()
         city = (request.GET.get("city") or "").strip()
-        if query or city:
+        # Internal replays (saved-search alerts) are not user searches.
+        if (query or city) and not getattr(request, "_skip_search_event", False):
             SearchEvent.objects.create(
                 user=request.user if request.user.is_authenticated else None,
                 session_key=(request.headers.get("X-Session-Key", "") or request.GET.get("session_key", ""))[:64],

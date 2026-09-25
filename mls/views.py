@@ -73,6 +73,7 @@ from .serializers import (
 from mls.services.map_aggregates import get_resolution_for_zoom
 from mls.services.query_helpers import city_match_q, cities_match_q, price_field_for
 from mls.services.inquiry_ghl import sync_inquiry_to_ghl
+from mls.services.request_meta import client_ip, user_agent
 from mls.services.inquiry_notifications import send_inquiry_email_to_realtor
 from mls.services import openai_client
 from mls.services.ai_listing_summary import (
@@ -778,6 +779,8 @@ class PropertyInquiryAPIView(APIView):
 
         inquiry = serializer.save(
             user=request.user if request.user.is_authenticated else None,
+            ip_address=client_ip(request),
+            user_agent=user_agent(request),
         )
         page_url = serializer.validated_data.get("page_url") or ""
         listing_match = re.search(r"/listing/(?:rental/)?([^/?#]+)", page_url)
@@ -896,8 +899,14 @@ class ListingSubmissionSubmitAPIView(APIView):
             return Response({"detail": "Confirm ownership/authorization and publication consent before submitting."}, status=status.HTTP_400_BAD_REQUEST)
         submission.status = ListingSubmission.Status.SUBMITTED
         submission.submitted_at = timezone.now()
+        submission.submitted_ip = client_ip(request)
+        submission.submitted_user_agent = user_agent(request)
         submission.review_note = ""
-        submission.save(update_fields=["status", "submitted_at", "review_note", "updated_at"])
+        submission.save(
+            update_fields=[
+                "status", "submitted_at", "submitted_ip", "submitted_user_agent", "review_note", "updated_at",
+            ]
+        )
         return Response(ListingSubmissionSerializer(submission, context={"request": request}).data)
 
 
@@ -2639,19 +2648,28 @@ class ListingSyncStatusAPIView(APIView):
     """Reports the last fully successful DDF listing import."""
 
     permission_classes = [AllowAny]
+    CACHE_KEY = "listing-sync-status:v2"
 
     def get(self, request):
+        cached = cache.get(self.CACHE_KEY)
+        if cached is not None:
+            return Response(cached)
         sync_status = ListingSyncStatus.objects.filter(
             key="ddf_properties"
         ).first()
-        return Response(
-            {
-                "last_successful_at": (
-                    sync_status.last_successful_at if sync_status else None
-                ),
-                "listing_count": sync_status.listing_count if sync_status else 0,
-            }
-        )
+        payload = {
+            "last_successful_at": (
+                sync_status.last_successful_at if sync_status else None
+            ),
+            # Rows downloaded by the last run, NOT the catalogue size.
+            "listing_count": sync_status.listing_count if sync_status else 0,
+            # What the site can show right now: the figure for "N live listings".
+            "active_listing_count": Property.objects.filter(
+                standard_status__iexact="Active"
+            ).count(),
+        }
+        cache.set(self.CACHE_KEY, payload, 300)
+        return Response(payload)
 
 
 class ListingCatalogStatsAPIView(APIView):
@@ -3131,6 +3149,8 @@ class ListingViewBeaconAPIView(APIView):
             listing_key=lk,
             session_key=sk,
             user=user,
+            ip_address=client_ip(request),
+            user_agent=user_agent(request),
         )
         UserPropertyInteraction.objects.create(
             listing_key=lk,

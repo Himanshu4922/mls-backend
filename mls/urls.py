@@ -16,6 +16,7 @@ from .views_sitemap import SitemapListingKeysView
 from .views_market import (
     CatalogStatsBulkAPIView,
     MarketSoldTrendsAPIView,
+    RecentSalesAPIView,
     PlatformStatsAPIView,
     PropertyFacetsAPIView,
 )
@@ -101,6 +102,7 @@ urlpatterns = [
     path('properties/filter/', PropertyFilterView.as_view(), name='property_filter'),
     path('properties/facets/', PropertyFacetsAPIView.as_view(), name='property-facets'),
     path('market/sold-trends/', MarketSoldTrendsAPIView.as_view(), name='market-sold-trends'),
+    path('market/recent-sales/', RecentSalesAPIView.as_view(), name='market-recent-sales'),
     path('catalog-stats/bulk/', CatalogStatsBulkAPIView.as_view(), name='catalog-stats-bulk'),
     path('stats/platform/', PlatformStatsAPIView.as_view(), name='stats-platform'),
     path('properties/<str:listing_key>/recommendations/', PropertyRecommendationsAPIView.as_view(), name='property-recommendations'),

@@ -8,13 +8,23 @@ context and analytics, never for access control.
 """
 from __future__ import annotations
 
+import ipaddress
+
 USER_AGENT_MAX_LENGTH = 512
 
 
 def client_ip(request) -> str | None:
+    """First X-Forwarded-For entry, else REMOTE_ADDR; None unless a valid IP.
+
+    Validated because the header is client-controlled and the value lands in
+    a GenericIPAddressField (Postgres ``inet``), which rejects junk.
+    """
     forwarded = request.META.get("HTTP_X_FORWARDED_FOR", "")
-    candidate = forwarded.split(",")[0].strip() or request.META.get("REMOTE_ADDR") or ""
-    return candidate[:45] or None  # 45 = longest textual IPv6
+    candidate = (forwarded.split(",")[0].strip() or request.META.get("REMOTE_ADDR") or "")[:45]
+    try:
+        return str(ipaddress.ip_address(candidate))
+    except ValueError:
+        return None
 
 
 def user_agent(request) -> str:

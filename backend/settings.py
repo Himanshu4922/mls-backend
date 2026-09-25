@@ -181,6 +181,20 @@ if os.environ.get("HOMEPAGE_BEAT_ENABLED", "0") == "1":
         "homepage-nearby-alerts": {"task": "homepage.tasks.send_nearby_alerts", "schedule": crontab(hour=12, minute=0)},
     }
 
+# Saved-search alerts (mls/services/saved_search_alerts.py). Runs daily; each
+# search's own cadence (daily/weekly) decides whether it is due.
+if os.environ.get("SAVED_SEARCH_ALERTS_BEAT_ENABLED", "0") == "1":
+    CELERY_BEAT_SCHEDULE = {
+        **globals().get("CELERY_BEAT_SCHEDULE", {}),
+        "send-saved-search-alerts": {
+            "task": "mls.tasks.run_saved_search_alerts",
+            "schedule": crontab(
+                hour=int(os.environ.get("SAVED_SEARCH_ALERTS_HOUR_UTC", "12")),
+                minute=int(os.environ.get("SAVED_SEARCH_ALERTS_MINUTE_UTC", "30")),
+            ),
+        },
+    }
+
 # Market Trends sold data (mls/views_market.py warm_sold_trends). The GTA scope
 # is too slow to fetch per request, so it is rebuilt here every 4h. Needs a
 # shared cache (CACHE_URL): with the locmem fallback the worker's cache is

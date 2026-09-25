@@ -25,7 +25,7 @@ from drf_spectacular.utils import (
     inline_serializer,
 )
 from rest_framework import serializers, status
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -908,3 +908,123 @@ def warm_sold_trends(window_months: int = 12) -> dict[str, Any]:
             logger.warning("sold-trends warm failed for %s: %s", label, exc)
             report["failed"][label] = str(exc)
     return report
+
+
+# --------------------------------------------------------------------------- #
+# Recently sold (scope #7): closed sales list, AMPRE-backed                    #
+# --------------------------------------------------------------------------- #
+
+RECENT_SALES_DAY_OPTIONS = (7, 30, 90)
+RECENT_SALES_PAGE_SIZE = 24
+RECENT_SALES_MAX_ROWS = 8000
+RECENT_SALES_CACHE_SECONDS = 60 * 60
+# Homes only: AMPRE mixes in commercial sales, parking spaces and lockers.
+RESIDENTIAL_SOLD_CLAUSE = (
+    "startswith(PropertyType,'Residential') "
+    "and PropertySubType ne 'Parking Space' and PropertySubType ne 'Locker'"
+)
+
+
+def _recent_sale_row(row: dict[str, Any]) -> dict[str, Any] | None:
+    close_price = row.get("ClosePrice")
+    close_dt = _parse_ampre_datetime(row.get("CloseDate"))
+    if not close_price or not close_dt:
+        return None
+    list_price = row.get("ListPrice") or row.get("OriginalListPrice")
+    entry_dt = _parse_ampre_datetime(row.get("OriginalEntryTimestamp"))
+    dom = (close_dt.date() - entry_dt.date()).days if entry_dt else None
+    over_under = None
+    if list_price:
+        ratio = float(close_price) / float(list_price)
+        if RATIO_SANITY_MIN <= ratio <= RATIO_SANITY_MAX:
+            over_under = round((ratio - 1) * 100, 1)
+    return {
+        "listing_key": row.get("ListingKey"),
+        "address": row.get("UnparsedAddress") or "",
+        "city": row.get("City") or "",
+        "property_sub_type": row.get("PropertySubType") or "",
+        "bedrooms": row.get("BedroomsTotal"),
+        "bathrooms": row.get("BathroomsTotalInteger"),
+        "close_price": float(close_price),
+        "list_price": float(list_price) if list_price else None,
+        "close_date": close_dt.date().isoformat(),
+        "days_on_market": dom if dom is not None and dom >= 0 else None,
+        "over_under_asking_pct": over_under,
+    }
+
+
+def get_recent_sales(city: str, days: int) -> list[dict[str, Any]]:
+    """Closed residential sales in ``city`` over ``days``, newest first. Cached 1h."""
+    cache_key = f"recent-sales:v1:{hashlib.md5(city.lower().encode()).hexdigest()}:{days}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+    now = timezone.now()
+    start = (now - timedelta(days=days)).date().isoformat()
+    end = (now + timedelta(days=1)).date().isoformat()
+    quoted = city.replace("'", "''")
+    raw = fetch_property_page(
+        filter_expression=(
+            f"startswith(City,'{quoted}') "
+            "and StandardStatus eq 'Closed' and TransactionType eq 'For Sale' "
+            f"and {RESIDENTIAL_SOLD_CLAUSE} "
+            f"and CloseDate ge {start} and CloseDate lt {end}"
+        ),
+        select_fields=[
+            "ListingKey", "UnparsedAddress", "City", "PropertySubType",
+            "BedroomsTotal", "BathroomsTotalInteger", "ClosePrice", "CloseDate",
+            "ListPrice", "OriginalListPrice", "OriginalEntryTimestamp",
+        ],
+        orderby="CloseDate desc",
+        top=1000,
+        max_rows=RECENT_SALES_MAX_ROWS,
+    )
+    rows = [r for r in (_recent_sale_row(row) for row in raw) if r]
+    cache.set(cache_key, rows, RECENT_SALES_CACHE_SECONDS)
+    return rows
+
+
+class RecentSalesAPIView(APIView):
+    """GET /api/mls/market/recent-sales/?city=&days=30&page=1 — recently sold homes.
+
+    Signed-in users only. TRREB's VOW rules require a registered, signed-in
+    user before sold prices are shown (the same reason HouseSigma gates them),
+    so this is IsAuthenticated rather than AllowAny.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        city = (request.query_params.get("city") or "").strip()[:60]
+        if not city:
+            return Response({"error": "Provide city."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            days = int(request.query_params.get("days") or 30)
+        except ValueError:
+            days = 30
+        if days not in RECENT_SALES_DAY_OPTIONS:
+            days = 30
+        try:
+            page = max(1, int(request.query_params.get("page") or 1))
+        except ValueError:
+            page = 1
+        try:
+            rows = get_recent_sales(city, days)
+        except AmpreClientError as exc:
+            logger.warning("recent-sales upstream failure for %s: %s", city, exc)
+            return Response(
+                {"error": "Sold data is temporarily unavailable."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        start = (page - 1) * RECENT_SALES_PAGE_SIZE
+        return Response(
+            {
+                "city": city,
+                "days": days,
+                "count": len(rows),
+                "page": page,
+                "page_size": RECENT_SALES_PAGE_SIZE,
+                "truncated": len(rows) >= RECENT_SALES_MAX_ROWS,
+                "results": rows[start:start + RECENT_SALES_PAGE_SIZE],
+            }
+        )
