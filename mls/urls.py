@@ -41,6 +41,15 @@ from .views_precon import (
     PreComPropertyListAPIView,
 )
 from .views_search import SearchSuggestAPIView
+from .views_studio import (
+    StudioPreconAssetUploadAPIView,
+    StudioPreconDetailAPIView,
+    StudioPreconListCreateAPIView,
+    StudioSubmissionDecisionAPIView,
+    StudioSubmissionDetailAPIView,
+    StudioSubmissionLinkAPIView,
+    StudioSubmissionListAPIView,
+)
 from .views_saved_search import (
     SavedSearchDetailAPIView,
     SavedSearchListCreateAPIView,
@@ -92,6 +101,14 @@ urlpatterns = [
     path('properties/pre-conn-properties/', PreConnPropertiesAPIView.as_view(), name='pre-conn-properties'),
     path('properties/upload-pre-conn/', UploadPreConnListingsAPIView.as_view(), name='upload-pre-conn'),
     path('precon-properties/', PreComPropertyListAPIView.as_view(), name='precon-property-list'),
+    # Staff Studio (scope #2d).
+    path('studio/precon/', StudioPreconListCreateAPIView.as_view(), name='studio-precon-list'),
+    path('studio/precon/assets/', StudioPreconAssetUploadAPIView.as_view(), name='studio-precon-assets'),
+    path('studio/precon/<int:pk>/', StudioPreconDetailAPIView.as_view(), name='studio-precon-detail'),
+    path('studio/submissions/', StudioSubmissionListAPIView.as_view(), name='studio-submission-list'),
+    path('studio/submissions/<int:pk>/', StudioSubmissionDetailAPIView.as_view(), name='studio-submission-detail'),
+    path('studio/submissions/<int:pk>/decision/', StudioSubmissionDecisionAPIView.as_view(), name='studio-submission-decision'),
+    path('studio/submissions/<int:pk>/precon/', StudioSubmissionLinkAPIView.as_view(), name='studio-submission-link'),
     path('precon-properties/bulk-upload/', PreComPropertyBulkUploadAPIView.as_view(), name='precon-property-bulk-upload'),
     path('precon-properties/<int:pk>/floor-plan-intent/', PreComFloorPlanIntentAPIView.as_view(), name='precon-floor-plan-intent'),
     path('precon-properties/<int:pk>/document-intent/', PreComDocumentIntentAPIView.as_view(), name='precon-document-intent'),
