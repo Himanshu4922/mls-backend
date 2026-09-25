@@ -21,6 +21,8 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
+from mls.services.request_meta import client_ip
+
 from .models import (
     BuyerIncentive,
     CommunityImage,
@@ -59,9 +61,7 @@ def _int_param(request, name: str, default: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, value))
 
 
-def _client_ip(request) -> str | None:
-    forwarded = request.META.get("HTTP_X_FORWARDED_FOR", "")
-    return (forwarded.split(",")[0].strip() or request.META.get("REMOTE_ADDR")) or None
+_client_ip = client_ip
 
 
 def _unavailable(message: str) -> Response:

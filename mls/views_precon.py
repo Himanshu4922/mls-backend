@@ -498,7 +498,6 @@ class PreComPropertyBulkUploadAPIView(APIView):
         },
     )
     def post(self, request):
-        print("qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq")
         serializer = PreComBulkUploadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         uploaded = serializer.validated_data["file"]

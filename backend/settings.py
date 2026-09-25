@@ -106,7 +106,14 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
-_database_url = os.environ.get('DATABASE_URL', 'postgresql://neondb_owner:npg_9JxAXdt5ZbNn@ep-young-river-adbytfzk-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require')
+_database_url = os.environ.get('DATABASE_URL', '').strip()
+if not _database_url:
+    from django.core.exceptions import ImproperlyConfigured
+
+    raise ImproperlyConfigured(
+        "DATABASE_URL is not set. Put it in backend/.env.local (local) or the "
+        "deployment environment; credentials are never hardcoded here."
+    )
 DATABASES = {
     'default': dj_database_url.config(
         default=_database_url,
@@ -172,6 +179,16 @@ if os.environ.get("HOMEPAGE_BEAT_ENABLED", "0") == "1":
             "schedule": crontab(hour=7, minute=0),
         },
         "homepage-nearby-alerts": {"task": "homepage.tasks.send_nearby_alerts", "schedule": crontab(hour=12, minute=0)},
+    }
+
+# Market Trends sold data (mls/views_market.py warm_sold_trends). The GTA scope
+# is too slow to fetch per request, so it is rebuilt here every 4h. Needs a
+# shared cache (CACHE_URL): with the locmem fallback the worker's cache is
+# invisible to the web process. Cron alternative: `manage.py warm_sold_trends`.
+if os.environ.get("SOLD_TRENDS_WARM_BEAT_ENABLED", "0") == "1":
+    CELERY_BEAT_SCHEDULE = {
+        **globals().get("CELERY_BEAT_SCHEDULE", {}),
+        "warm-sold-trends": {"task": "mls.tasks.warm_sold_trends_cache", "schedule": crontab(minute=5, hour="*/4")},
     }
 
 CACHE_URL = os.environ.get("CACHE_URL", os.environ.get("REDIS_URL", "")).strip()
@@ -297,18 +314,16 @@ CSRF_TRUSTED_ORIGINS = [
 
 CORS_ALLOW_CREDENTIALS = True
 
-CLIENT_ID = 'uCyucNP7QrV4fLA8YtWngTUg'
-CLIENT_SECRET = 'OFocUcAnQShbZRPUKdaafgEi'
+# CREA DDF credentials (mls/helpers.py token exchange). Env only.
+CLIENT_ID = os.environ.get('DDF_CLIENT_ID', '').strip()
+CLIENT_SECRET = os.environ.get('DDF_CLIENT_SECRET', '').strip()
 
 # AMPRE (TRREB) OData feed used for sold data and sold-trends.
 AMPRE_ODATA_BASE_URL = os.environ.get(
     'AMPRE_ODATA_BASE_URL',
     'https://query.ampre.ca/odata',
 ).rstrip('/')
-AMPRE_ODATA_BEARER_TOKEN = os.environ.get(
-    'AMPRE_ODATA_BEARER_TOKEN',
-    'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ2ZW5kb3IvdHJyZWIvOTA5NCIsImF1ZCI6IkFtcFVzZXJzUHJkIiwicm9sZXMiOlsiQW1wVmVuZG9yIl0sImlzcyI6InByb2QuYW1wcmUuY2EiLCJleHAiOjI1MzQwMjMwMDc5OSwiaWF0IjoxNzU0NDMxMDk3LCJzdWJqZWN0VHlwZSI6InZlbmRvciIsInN1YmplY3RLZXkiOiI5MDk0IiwianRpIjoiZGUwMjA4YmJmYjE3YTlhNSIsImN1c3RvbWVyTmFtZSI6InRycmViIn0.mw4UWv_7gXJraeHrejeQA0muv7apyjyrC5YmD4bwC60',
-)
+AMPRE_ODATA_BEARER_TOKEN = os.environ.get('AMPRE_ODATA_BEARER_TOKEN', '').strip()
 
 AUTH_USER_MODEL = 'accounts.User'
 
