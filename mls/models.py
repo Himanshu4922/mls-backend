@@ -80,7 +80,13 @@ class Property(models.Model):
         choices=STATUS_CHOICES,
         default=None,null=True,blank=True
     )
-    is_featured = models.BooleanField(default=False)
+    is_featured = models.BooleanField(default=False, help_text="Pin this listing to the homepage Featured rail.")
+    featured_order = models.PositiveIntegerField(
+        null=True, blank=True, help_text="Position in the Featured rail (1 = first). Blank sorts after numbered ones."
+    )
+    featured_until = models.DateTimeField(
+        null=True, blank=True, help_text="Stop featuring after this time. Blank = until unticked."
+    )
     is_manual = models.BooleanField(default=False, help_text="If true, automated sync will not overwrite this listing")
     listing_key = models.CharField(max_length=2000, unique=True)
     property_sub_type = models.CharField(max_length=2000, null=True, blank=True)
@@ -1394,6 +1400,13 @@ class PreComProperty(models.Model):
     address = models.TextField(blank=True)
 
     developer_name = models.CharField(max_length=255, blank=True)
+
+    is_featured = models.BooleanField(
+        default=False, db_index=True, help_text="Pin this project to the homepage pre-construction rail."
+    )
+    featured_order = models.PositiveIntegerField(
+        null=True, blank=True, help_text="Position among pinned projects (1 = first)."
+    )
 
     SALES_STAGE_COMING_SOON = "coming_soon"
     SALES_STAGE_VIP_RELEASE = "vip_release"

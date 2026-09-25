@@ -1831,6 +1831,99 @@ class PropertyCompareDetailView(APIView):
         serializer = PropertyDetailSerializer(properties, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+def _exclusive_ids_qs():
+    """Ids of listings tagged exclusive or saying "exclusive" in the first
+    400 characters (~25–35 words) of the remarks.
+
+    Matched at read time rather than re-tagged: the DDF sync resets
+    ``category_type`` to ``ddf`` on every update, and a re-tagged row would
+    also escape the rolling-cache pruning, which only deletes ``ddf`` rows.
+    """
+    return (
+        Property.objects.annotate(intro=Lower(Substr("public_remarks", 1, 400)))
+        .filter(Q(intro__contains="exclusive") | Q(category_type=Property.EXCLUSIVE))
+        .values("id")
+    )
+
+
+# Statuses that must never appear in a homepage rail.
+INACTIVE_STATUS_Q = _build_status_group_q("sold,de-listed")
+FEATURED_CACHE_TTL_SECONDS = int(os.environ.get("FEATURED_CACHE_TTL_SECONDS", "300"))
+
+
+class FeaturedPropertiesAPIView(APIView):
+    """
+    GET /api/mls/properties/featured-properties/
+
+    Homepage Featured rail: listings an admin pinned (``is_featured``, in
+    ``featured_order``, until ``featured_until``) first, topped up with the
+    brokerage's exclusive listings when fewer than ``limit`` are pinned.
+    Sold and de-listed rows are left out of both.
+    """
+
+    @extend_schema(
+        summary="List featured properties",
+        description=(
+            "Admin-pinned listings first (featured_order, then newest), then exclusive "
+            "listings to fill the rail. Each row carries featured_source: pinned | exclusive."
+        ),
+        parameters=[
+            OpenApiParameter("limit", OpenApiTypes.INT, OpenApiParameter.QUERY, required=False, description="Rail size, 1–24. Defaults to 6."),
+            OpenApiParameter("fill", OpenApiTypes.BOOL, OpenApiParameter.QUERY, required=False, description="Top up with exclusive listings. Defaults to true."),
+        ],
+        responses={
+            200: OpenApiResponse(response=inline_serializer(
+                name="FeaturedPropertiesResponse",
+                fields={
+                    "count": serializers.IntegerField(),
+                    "pinned_count": serializers.IntegerField(),
+                    "results": PropertySerializer(many=True),
+                },
+            )),
+            400: OpenApiResponse(description="Invalid query parameter."),
+        },
+        auth=[],
+    )
+    def get(self, request):
+        try:
+            limit = max(1, min(int(request.query_params.get("limit", 6)), 24))
+        except (TypeError, ValueError):
+            return Response({"error": "limit must be an integer."}, status=400)
+        fill = str(request.query_params.get("fill", "true")).lower() not in {"0", "false", "no"}
+
+        cache_key = f"featured-properties:{limit}:{int(fill)}"
+        cached_payload = cache.get(cache_key)
+        if cached_payload is not None:
+            return Response(cached_payload)
+
+        now = timezone.now()
+        newest = ("-original_entry_timestamp", "-modification_timestamp")
+        pinned = list(
+            Property.objects.filter(is_featured=True)
+            .filter(Q(featured_until__isnull=True) | Q(featured_until__gt=now))
+            .exclude(INACTIVE_STATUS_Q)
+            .order_by(F("featured_order").asc(nulls_last=True), *newest)[:limit]
+        )
+        rows = [(p, "pinned") for p in pinned]
+        if fill and len(rows) < limit:
+            exclusive = (
+                Property.objects.filter(id__in=_exclusive_ids_qs())
+                .exclude(id__in=[p.id for p in pinned])
+                .exclude(INACTIVE_STATUS_Q)
+                .order_by(*newest)[: limit - len(rows)]
+            )
+            rows += [(p, "exclusive") for p in exclusive]
+
+        serializer = PropertySerializer([p for p, _ in rows], many=True, context={"request": request})
+        results = [
+            {**data, "featured_source": source}
+            for data, (_, source) in zip(serializer.data, rows)
+        ]
+        payload = {"count": len(results), "pinned_count": len(pinned), "results": results}
+        cache.set(cache_key, payload, FEATURED_CACHE_TTL_SECONDS)
+        return Response(payload)
+
+
 class ExclusivePropertiesAPIView(APIView):
     """
     GET /api/exclusive-properties/
@@ -1841,28 +1934,13 @@ class ExclusivePropertiesAPIView(APIView):
         limit = min(int(params.get('limit', 6)), 100)
         offset = int(params.get('offset', 0))
 
-        # CHECK ONLY FIRST 400 CHARS FOR "exclusive" (case-insensitive)
-        base_qs = Property.objects.annotate(
-            intro=Lower(Substr('public_remarks', 1, 400))
-        ).filter(
-            Q(intro__contains='exclusive') |
-            Q(category_type=Property.EXCLUSIVE)
-        ).distinct()
-
-        # Auto-tag any new ones found in intro
-        to_tag = base_qs.filter(intro__contains='exclusive') \
-                        .exclude(category_type=Property.EXCLUSIVE)
-        updated_count = 0
-        if to_tag.exists():
-            updated_count = to_tag.update(category_type=Property.EXCLUSIVE)
-
-        scoped_qs = Property.objects.filter(id__in=base_qs.values('id')).distinct()
+        scoped_qs = Property.objects.filter(id__in=_exclusive_ids_qs())
         final_qs, fallback_meta = _apply_fallback_pipeline(
             scoped_qs,
             params,
             ("-modification_timestamp", "-list_price"),
         )
-        return final_qs, limit, offset, updated_count, fallback_meta
+        return final_qs, limit, offset, fallback_meta
 
     @extend_schema(
         summary="List exclusive properties",
@@ -1883,7 +1961,6 @@ class ExclusivePropertiesAPIView(APIView):
                     "count": serializers.IntegerField(),
                     "next": serializers.IntegerField(allow_null=True),
                     "previous": serializers.IntegerField(allow_null=True),
-                    "updated_to_exclusive": serializers.IntegerField(),
                     "results": PropertySerializer(many=True),
                     "fallback_applied": serializers.BooleanField(required=False),
                 },
@@ -1900,7 +1977,7 @@ class ExclusivePropertiesAPIView(APIView):
         if cached_payload is not None:
             return Response(cached_payload)
 
-        qs, limit, offset, updated, fallback_meta = self.get_queryset(request.query_params)
+        qs, limit, offset, fallback_meta = self.get_queryset(request.query_params)
         paginator = Paginator(qs, limit)
         page = paginator.get_page((offset // limit) + 1)
 
@@ -1910,7 +1987,6 @@ class ExclusivePropertiesAPIView(APIView):
             "count": paginator.count,
             "next": offset + limit if page.has_next() else None,
             "previous": offset - limit if offset >= limit else None,
-            "updated_to_exclusive": updated,
             "results": serializer.data,
             **fallback_meta,
         }

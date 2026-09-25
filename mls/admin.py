@@ -285,9 +285,9 @@ class MediaInline(admin.TabularInline):
 
 class PropertyAdmin(SectionedAdminMixin, admin.ModelAdmin):
     change_list_template = "admin/mls/property_change_list.html"
-    list_display = ('listing_key','category_type','is_featured','list_price', 'property_sub_type', 'city', 'state_or_province')
+    list_display = ('listing_key','category_type','is_featured','featured_order','list_price', 'property_sub_type', 'city', 'state_or_province')
     list_filter = ('category_type', 'is_featured', 'city', 'state_or_province')
-    list_editable = ('is_featured',)
+    list_editable = ('is_featured', 'featured_order')
     search_fields = ('listing_key', 'city', 'street_name', 'public_remarks')
     inlines = [RoomInline, MediaInline]
     fieldsets = (
@@ -301,6 +301,8 @@ class PropertyAdmin(SectionedAdminMixin, admin.ModelAdmin):
                     "property_sub_type",
                     "standard_status",
                     "is_featured",
+                    "featured_order",
+                    "featured_until",
                     "is_manual",
                 )
             },
@@ -563,6 +565,9 @@ class PreComPropertyInline(admin.StackedInline):
         "address",
         "latitude",
         "longitude",
+        "sales_stage",
+        "is_featured",
+        "featured_order",
     )
     verbose_name = "Pre-construction project details"
     verbose_name_plural = "Pre-construction project details"
@@ -657,7 +662,12 @@ class PreComPropertyAdmin(admin.ModelAdmin):
         "area",
         "latitude",
         "longitude",
+        "sales_stage",
+        "is_featured",
+        "featured_order",
     )
+    list_editable = ("is_featured", "featured_order")
+    list_filter = ("is_featured", "sales_stage")
     search_fields = ("content__title", "content__slug", "content__wp_id", "address")
     autocomplete_fields = ("content",)
     list_select_related = ("content",)

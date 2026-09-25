@@ -237,6 +237,7 @@ class PreComPropertySerializer(serializers.ModelSerializer):
             "featured_image_url",
             "developer_name",
             "sales_stage",
+            "is_featured",
         ]
 
     def get_featured_image_url(self, obj):
