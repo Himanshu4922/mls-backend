@@ -192,6 +192,17 @@ class NewsletterSubscribeView(APIView):
                 ),
                 to=subscriber.email,
             )
+            from mls.services.lead_ghl import push_lead_to_ghl
+
+            push_lead_to_ghl(
+                email=subscriber.email,
+                first_name=getattr(user, "first_name", "") if user else "",
+                last_name=getattr(user, "last_name", "") if user else "",
+                source="newsletter",
+                tags=["newsletter"],
+                note=f"Newsletter sign-up from {subscriber.source}.",
+                user=user,
+            )
         return Response({"subscribed": True}, status=status.HTTP_201_CREATED)
 
 
@@ -232,6 +243,21 @@ class NearbyAlertListCreateView(APIView):
                 consent_at=timezone.now(),
                 consent_text=NEARBY_CONSENT_TEXT,
             )
+        from mls.services.lead_ghl import push_lead_to_ghl
+
+        push_lead_to_ghl(
+            email=alert.email,
+            first_name=getattr(alert.user, "first_name", ""),
+            last_name=getattr(alert.user, "last_name", ""),
+            source="neighbour-alert",
+            tags=["neighbour-alert"],
+            note=(
+                "Neighbour alert sign-up\n"
+                f"Location: {alert.label}\n"
+                f"Radius: {alert.radius_km} km"
+            ),
+            user=alert.user,
+        )
         return Response(
             {"id": alert.pk, "label": alert.label, "radius_km": float(alert.radius_km)},
             status=status.HTTP_201_CREATED,

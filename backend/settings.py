@@ -411,6 +411,10 @@ REST_FRAMEWORK = {
         # AI search (mls/views_ai.py): each uncached parse is a paid OpenAI call.
         'ai_search_anon': os.environ.get('AI_SEARCH_ANON_RATE', '30/hour'),
         'ai_search_user': os.environ.get('AI_SEARCH_USER_RATE', '120/hour'),
+        'ai_assist_anon': os.environ.get('AI_ASSIST_ANON_RATE', '20/hour'),
+        'ai_assist_user': os.environ.get('AI_ASSIST_USER_RATE', '60/hour'),
+        'precon_activity_anon': '120/hour',
+        'precon_activity_user': '300/hour',
     },
 }
 

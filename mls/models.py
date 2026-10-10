@@ -1715,3 +1715,102 @@ class PropertyEmbedding(models.Model):
 
     def __str__(self):
         return f"Embedding<{self.property_id}:{self.model}>"
+
+
+class PreconActivityEvent(models.Model):
+    """Page views and Floor plans / Pricing / Contact clicks on a pre-con project."""
+
+    EVENT_VIEW = "view"
+    EVENT_FLOOR_PLANS = "floor_plans"
+    EVENT_PRICING = "pricing"
+    EVENT_CONTACT = "contact"
+    EVENT_CHOICES = [
+        (EVENT_VIEW, "Page view"),
+        (EVENT_FLOOR_PLANS, "Floor plans"),
+        (EVENT_PRICING, "Pricing"),
+        (EVENT_CONTACT, "Contact"),
+    ]
+
+    project = models.ForeignKey(
+        PreComProperty,
+        on_delete=models.CASCADE,
+        related_name="activity_events",
+    )
+    event = models.CharField(max_length=32, choices=EVENT_CHOICES, db_index=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="precon_activity_events",
+    )
+    session_key = models.CharField(max_length=64, blank=True, db_index=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=512, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["project", "event", "created_at"]),
+            models.Index(fields=["user", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"PreconActivity<{self.project_id}:{self.event}>"
+
+
+class WebPushSubscription(models.Model):
+    """A browser push subscription for one signed-in user (scope #5b)."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="web_push_subscriptions",
+    )
+    endpoint = models.TextField(unique=True)
+    p256dh = models.CharField(max_length=255)
+    auth = models.CharField(max_length=255)
+    user_agent = models.CharField(max_length=512, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["user", "-created_at"])]
+
+    def __str__(self):
+        return f"WebPush<{self.user_id}>"
+
+
+class AIAssistLog(models.Model):
+    """One question asked of the on-site assistant (scope #25)."""
+
+    HANDOFF_NONE = "none"
+    HANDOFF_WHATSAPP = "whatsapp"
+    HANDOFF_CONTACT = "contact"
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="ai_assist_logs",
+    )
+    session_key = models.CharField(max_length=64, blank=True)
+    question = models.CharField(max_length=500)
+    answer = models.TextField(blank=True)
+    links = models.JSONField(default=list, blank=True)
+    handoff = models.CharField(max_length=16, default=HANDOFF_NONE)
+    fallback = models.BooleanField(default=False)
+    error = models.TextField(blank=True)
+    model = models.CharField(max_length=80, blank=True)
+    prompt_tokens = models.PositiveIntegerField(default=0)
+    completion_tokens = models.PositiveIntegerField(default=0)
+    latency_ms = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"AIAssist<{self.question[:40]}>"

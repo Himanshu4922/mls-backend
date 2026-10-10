@@ -11,6 +11,20 @@ from mls.models import PropertyInquiry
 logger = logging.getLogger(__name__)
 
 
+def _inquiry_tags(inquiry: PropertyInquiry) -> list[str]:
+    """Tags so market-trends and assignment leads are distinguishable in the CRM."""
+    url = (inquiry.page_url or "").lower()
+    key = (inquiry.listing_key or "").upper()
+    tags = ["property-inquiry"]
+    if "market-trends" in url or inquiry.intent == "explore":
+        tags.append("market-trends")
+    if "/assignments" in url or key.startswith("ASSIGNMENT-"):
+        tags.append("assignment-inquiry")
+    if "/preconstruction" in url or key.startswith("PRECON-"):
+        tags.append("precon-inquiry")
+    return tags
+
+
 def _format_inquiry_note(inquiry: PropertyInquiry) -> str:
     lines = [
         "Property inquiry (Find My Home)",
@@ -58,7 +72,7 @@ def sync_inquiry_to_ghl(inquiry: PropertyInquiry) -> None:
                 inquiry.email,
                 inquiry.phone or None,
                 source="property-inquiry",
-                tags=["property-inquiry"],
+                tags=_inquiry_tags(inquiry),
             )
 
         if not contact_id:

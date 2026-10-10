@@ -10,7 +10,9 @@ from .views_estate import (
     EstatePropertyMediaUploadAPIView,
     EstatePropertySchemaAPIView,
 )
-from .views_ai import AISearchParseAPIView
+from .views_ai import AIAssistAPIView, AISearchParseAPIView
+from .views_activity import PreconActivityAPIView, StudioActivityAPIView
+from .views_push import PushSubscribeAPIView, PushVapidAPIView
 from .views_properties import PropertyFilterView
 from .views_sitemap import SitemapListingKeysView
 from .views_market import (
@@ -94,6 +96,11 @@ urlpatterns = [
     path('locations/geocode/', MapGeocodingAPIView.as_view(), name='map-geocoding'),
     path('properties/property-types/', PropertyTypesAPIView.as_view(), name='property-types'),
     path('ai-search/parse/', AISearchParseAPIView.as_view(), name='ai-search-parse'),
+    path('ai/assist/', AIAssistAPIView.as_view(), name='ai-assist'),
+    path('activity/precon/', PreconActivityAPIView.as_view(), name='precon-activity'),
+    path('studio/activity/', StudioActivityAPIView.as_view(), name='studio-activity'),
+    path('push/vapid/', PushVapidAPIView.as_view(), name='push-vapid'),
+    path('push/subscribe/', PushSubscribeAPIView.as_view(), name='push-subscribe'),
     path('properties/featured-properties/', FeaturedPropertiesAPIView.as_view(), name='featured_properties'),
     path('properties/exclusive-properties/', ExclusivePropertiesAPIView.as_view(), name='exclusive_properties'),
     path('properties/newly-listed-properties/', NewlyListedPropertiesAPIView.as_view(), name='exclusive_properties'),

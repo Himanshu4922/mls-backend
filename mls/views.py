@@ -907,6 +907,26 @@ class ListingSubmissionSubmitAPIView(APIView):
                 "status", "submitted_at", "submitted_ip", "submitted_user_agent", "review_note", "updated_at",
             ]
         )
+        if submission.purpose == ListingSubmission.Purpose.ASSIGNMENT:
+            from mls.services.lead_ghl import push_lead_to_ghl
+
+            parts = (submission.contact_name or "").split(" ", 1)
+            push_lead_to_ghl(
+                email=submission.contact_email,
+                first_name=parts[0] if parts else "",
+                last_name=parts[1] if len(parts) > 1 else "",
+                phone=submission.contact_phone,
+                source="assignment-submission",
+                tags=["assignment-submission"],
+                note=(
+                    "Assignment submission\n"
+                    f"Address: {submission.address_line_1}, {submission.city}\n"
+                    f"Project: {submission.project_name or '—'}\n"
+                    f"Asking: {submission.asking_price or '—'}\n"
+                    f"Submission ID: {submission.pk}"
+                ),
+                user=request.user,
+            )
         return Response(ListingSubmissionSerializer(submission, context={"request": request}).data)
 
 

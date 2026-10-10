@@ -503,6 +503,20 @@ def send_daily_listing_newsletters(
                 skipped += 1
             else:
                 sent += 1
+                if getattr(prefs, "push_watched_property", False):
+                    try:
+                        from mls.services.web_push import send_push_to_user
+
+                        send_push_to_user(
+                            user,
+                            {
+                                "title": "HomeAtlas listing updates",
+                                "body": f"{total_listings} update{'s' if total_listings != 1 else ''} on homes you watch.",
+                                "url": "/watched",
+                            },
+                        )
+                    except Exception:
+                        logger.exception("web push failed for user_id=%s", user.id)
         except Exception as exc:  # pragma: no cover - defensive
             failed += 1
             logger.exception("daily newsletter send failed for user_id=%s", user.id)

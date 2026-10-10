@@ -9,7 +9,8 @@ from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from rest_framework.views import APIView
 
-from .models import AISearchLog
+from .models import AIAssistLog, AISearchLog
+from .services.ai_assist import MAX_QUESTION_CHARS, answer_question
 from .services.ai_search import MAX_QUERY_CHARS, parse_search_query
 
 logger = logging.getLogger(__name__)
@@ -97,4 +98,53 @@ class AISearchParseAPIView(APIView):
         except Exception:  # noqa: BLE001 - logging must never break search
             logger.exception("Could not write AISearchLog")
 
+        return Response(result.as_response())
+
+
+class AIAssistAnonThrottle(AnonRateThrottle):
+    scope = "ai_assist_anon"
+
+
+class AIAssistUserThrottle(UserRateThrottle):
+    scope = "ai_assist_user"
+
+
+class AIAssistAPIView(APIView):
+    """
+    POST /api/mls/ai/assist/
+
+    Body: ``{"question": "...", "session_key": "..."}``.
+
+    Answers from site data only (listings, pre-con, assignments, page list).
+    When OpenAI is not configured the reply is still 200, with ``fallback``
+    and links to the closest pages.
+    """
+
+    permission_classes = [AllowAny]
+    throttle_classes = [AIAssistAnonThrottle, AIAssistUserThrottle]
+
+    def post(self, request):
+        data = request.data if isinstance(request.data, dict) else {}
+        question = data.get("question")
+        if not isinstance(question, str) or not question.strip():
+            return Response({"error": "Ask a question about the site."}, status=status.HTTP_400_BAD_REQUEST)
+        question = question.strip()[:MAX_QUESTION_CHARS]
+        result = answer_question(question)
+        try:
+            AIAssistLog.objects.create(
+                user=request.user if request.user.is_authenticated else None,
+                session_key=str(data.get("session_key") or "")[:64],
+                question=question,
+                answer=result.answer,
+                links=result.links,
+                handoff=result.handoff,
+                fallback=result.fallback,
+                error=result.error,
+                model=result.model[:80],
+                prompt_tokens=result.prompt_tokens,
+                completion_tokens=result.completion_tokens,
+                latency_ms=result.latency_ms,
+            )
+        except Exception:
+            logger.exception("Could not write AIAssistLog")
         return Response(result.as_response())

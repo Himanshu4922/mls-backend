@@ -277,6 +277,27 @@ class ValuationEstimateAPIView(APIView):
                 }
             )
 
+        user = request.user if getattr(request, "user", None) and request.user.is_authenticated else None
+        if user and getattr(user, "email", None):
+            from mls.services.lead_ghl import push_lead_to_ghl
+
+            address = (prop.unparsed_address if prop else None) or body.get("address") or postal or city
+            push_lead_to_ghl(
+                email=user.email,
+                first_name=getattr(user, "first_name", ""),
+                last_name=getattr(user, "last_name", ""),
+                phone=getattr(user, "phone", None),
+                source="home-valuation",
+                tags=["home-valuation"],
+                note=(
+                    "Home valuation requested\n"
+                    f"Address: {address or '—'}\n"
+                    f"City: {city or '—'}\n"
+                    f"Estimate: {round(point, 2)}"
+                ),
+                user=user,
+            )
+
         return Response(
             {
                 "estimate": {
