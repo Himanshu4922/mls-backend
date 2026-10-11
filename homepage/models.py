@@ -33,6 +33,64 @@ class OrderedActiveModel(models.Model):
 # --------------------------------------------------------------------------
 
 
+class SiteContent(models.Model):
+    """Versioned site document: homepage sections, chrome, or SEO.
+
+    ``draft`` is what the admin console is editing. ``published`` is what the
+    public site reads. Saving a draft never changes the live site.
+    """
+
+    HOMEPAGE = "homepage"
+    CHROME = "chrome"
+    SEO = "seo"
+    KEYS = [
+        (HOMEPAGE, "Homepage"),
+        (CHROME, "Header, footer, and contact"),
+        (SEO, "SEO"),
+    ]
+
+    key = models.CharField(max_length=32, unique=True, choices=KEYS)
+    draft = models.JSONField(default=dict)
+    published = models.JSONField(default=dict)
+    schema_version = models.PositiveIntegerField(default=1)
+    updated_at = models.DateTimeField(auto_now=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+
+    class Meta:
+        ordering = ["key"]
+
+    def __str__(self) -> str:
+        return self.key
+
+
+class SiteContentRevision(models.Model):
+    """A published snapshot, so a bad publish can be restored into the draft."""
+
+    content = models.ForeignKey(SiteContent, on_delete=models.CASCADE, related_name="revisions")
+    snapshot = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.content_id} @ {self.created_at:%Y-%m-%d %H:%M}"
+
+
 class BuyerIncentive(OrderedActiveModel):
     """A buyer program (FHSA, land-transfer rebate, …) shown on the homepage.
 

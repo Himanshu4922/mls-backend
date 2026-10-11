@@ -43,6 +43,7 @@ from .views_precon import (
     PreComPropertyListAPIView,
 )
 from .views_search import SearchSuggestAPIView
+from .views_featured_studio import StudioFeaturedAPIView
 from .views_studio import (
     StudioPreconAssetUploadAPIView,
     StudioPreconDetailAPIView,
@@ -99,6 +100,7 @@ urlpatterns = [
     path('ai/assist/', AIAssistAPIView.as_view(), name='ai-assist'),
     path('activity/precon/', PreconActivityAPIView.as_view(), name='precon-activity'),
     path('studio/activity/', StudioActivityAPIView.as_view(), name='studio-activity'),
+    path('studio/featured/', StudioFeaturedAPIView.as_view(), name='studio-featured'),
     path('push/vapid/', PushVapidAPIView.as_view(), name='push-vapid'),
     path('push/subscribe/', PushSubscribeAPIView.as_view(), name='push-subscribe'),
     path('properties/featured-properties/', FeaturedPropertiesAPIView.as_view(), name='featured_properties'),

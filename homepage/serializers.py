@@ -9,13 +9,19 @@ from .services.subscriptions import MAX_RADIUS_KM
 class BuyerIncentiveSerializer(serializers.ModelSerializer):
     class Meta:
         model = BuyerIncentive
-        fields = ["id", "title", "label", "icon", "amount_text", "description", "source_url", "reviewed_at"]
+        fields = [
+            "id", "title", "label", "icon", "amount_text", "description",
+            "source_url", "reviewed_at", "is_active", "display_order",
+        ]
 
 
 class PartnerSerializer(serializers.ModelSerializer):
     class Meta:
         model = Partner
-        fields = ["id", "name", "category", "description", "logo_url", "website_url"]
+        fields = [
+            "id", "name", "category", "description", "logo_url", "website_url",
+            "is_active", "display_order",
+        ]
 
 
 class CommunityImageSerializer(serializers.ModelSerializer):
@@ -29,7 +35,7 @@ class NewsArticleSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = NewsArticle
-        fields = ["id", "title", "url", "summary", "image_url", "tag", "source", "published_at"]
+        fields = ["id", "title", "url", "summary", "image_url", "tag", "source", "published_at", "is_hidden"]
 
 
 class ConsentField(serializers.BooleanField):
