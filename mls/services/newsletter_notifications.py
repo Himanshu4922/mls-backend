@@ -62,7 +62,7 @@ def _internal_listing_url(prop: Property) -> str:
     base = (
         getattr(settings, "FRONTEND_BASE_URL", "")
         or getattr(settings, "PUBLIC_FRONTEND_URL", "")
-        or DEFAULT_INTERNAL_SITE_URL
+        or os.environ.get("NEWSLETTER_SITE_URL", DEFAULT_INTERNAL_SITE_URL).strip()
     ).strip()
     if not base:
         base = "https://estate-4u.com"

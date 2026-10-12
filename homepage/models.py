@@ -308,3 +308,21 @@ class MarketSnapshot(models.Model):
 
     def __str__(self) -> str:
         return f"{self.scope} @ {self.as_of:%Y-%m-%d %H:%M}"
+
+
+class IntegrationSettings(models.Model):
+    """One row of connection values saved from the admin console.
+
+    Empty fields fall back to the server environment. Secrets are never
+    returned to the public site.
+    """
+
+    values = models.JSONField(default=dict)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "integration settings"
+        verbose_name_plural = "integration settings"
+
+    def __str__(self) -> str:
+        return "Connections"
