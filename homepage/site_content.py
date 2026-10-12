@@ -18,7 +18,7 @@ HERO_IMAGE = "/images/hero/hero-bg.jpg"
 QUICK_ICONS = {"buy", "rent", "precon", "sell"}
 TYPE_ICONS = {"detached", "condo", "townhome", "luxury", "openHouse", "rental"}
 ADVANTAGE_ICONS = {"mls", "precon", "local", "guidance"}
-SOCIALS = ("facebook", "x", "linkedin")
+SOCIALS = ("facebook", "instagram", "youtube", "x", "linkedin")
 
 SECTION_IDS = (
     "hero",
@@ -128,8 +128,8 @@ def _default_sections() -> list[dict]:
             "visible": True,
             "content": {
                 "eyebrow": "Schools & families",
-                "title": "Listings by Top-Rated Schools",
-                "description": "Homes within highly rated school catchment zones",
+                "title": "GTA Secondary Schools",
+                "description": "Published EQAO results for GTA secondary schools. These are school locations, not attendance boundaries.",
                 "items": [
                     {"name": "Westmount Collegiate", "community": "Toronto", "rating": 9.2, "listings": 48, "imageUrl": "https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=800&h=500&fit=crop", "imageAlt": "House exterior", "href": "/listings?city=Toronto"},
                     {"name": "Thornlea Secondary", "community": "Markham", "rating": 8.9, "listings": 32, "imageUrl": "https://images.unsplash.com/photo-1570129477492-45c003edd2be?w=800&h=500&fit=crop", "imageAlt": "House exterior", "href": "/listings?city=Markham"},
@@ -283,9 +283,9 @@ def _default_chrome() -> dict:
             "bannerHref": "/listings",
             "blurb": "HomeAtlas is a real estate intelligence platform providing GTA home valuations and market data.",
             "socials": [
-                {"network": "facebook", "href": "https://facebook.com"},
-                {"network": "x", "href": "https://x.com"},
-                {"network": "linkedin", "href": "https://linkedin.com"},
+                {"network": "facebook", "href": "https://www.facebook.com/estate4uprec/"},
+                {"network": "instagram", "href": "https://www.instagram.com/estate4uprec/"},
+                {"network": "youtube", "href": "https://www.youtube.com/channel/UC7g87rmbTk4N8v5n4QAGfWw"},
             ],
             "columns": [
                 {"heading": "Explore", "links": [_link("Buy a home", "/listings?status=Active"), _link("Rentals", "/listings?tx=rent"), _link("Preconstruction", "/preconstruction"), _link("Assignments", "/assignments"), _link("Map search", "/map-search"), _link("Recently sold", "/recently-sold"), _link("Communities", "/communities")]},
@@ -294,7 +294,27 @@ def _default_chrome() -> dict:
                 {"heading": "Company", "links": [_link("Saved homes", "/watched"), _link("Compare homes", "/compare"), _link("Blog", "/blog"), _link("Sitemap", "/site-map")]},
             ],
         },
-        "contact": {"whatsapp": "14168214200"},
+        "contact": _default_contact(),
+    }
+
+
+def _default_contact() -> dict:
+    return {
+        "whatsapp": "14168214200",
+        "name": "Gunneet Singh",
+        "title": "REALTOR® | HomeAtlas",
+        "email": "info@estate-4u.com",
+        "phones": [
+            {"label": "Direct", "display": "+1 (416) 821-4200"},
+            {"label": "Sales", "display": "+1 (647) 515-2000"},
+        ],
+        "address": "115 Matheson Blvd W, Unit 102, Mississauga L5R 1C6",
+        "mapUrl": "https://maps.app.goo.gl/UCdgZUYWUuVkrRAe9",
+        "hours": [
+            {"days": "Monday – Friday", "hours": "9:00 AM – 7:00 PM"},
+            {"days": "Saturday", "hours": "10:00 AM – 5:00 PM"},
+            {"days": "Sunday", "hours": "By appointment"},
+        ],
     }
 
 
@@ -693,13 +713,88 @@ def _pair(item, path: str, errors: dict, *, label_max: int = 40, allow_empty_hre
     return {"label": label, "href": href}
 
 
+def _email(value, path: str, errors: dict) -> str:
+    if not isinstance(value, str):
+        _err(errors, path, "Enter an email address.")
+        return ""
+    email = value.strip()
+    if not email:
+        return ""
+    if len(email) > 120 or email.count("@") != 1 or " " in email:
+        _err(errors, path, "Enter a valid email address.")
+    return email
+
+
+def _detail_rows(value, path: str, errors: dict, defaults: list, *, limit: int, fields: tuple) -> list:
+    if value is None:
+        return [dict(row) for row in defaults]
+    if not isinstance(value, list):
+        _err(errors, path, "Add the rows for this section.")
+        return [dict(row) for row in defaults]
+    if len(value) > limit:
+        _err(errors, path, f"Use at most {limit} rows.")
+    cleaned = []
+    for i, item in enumerate(value[:limit]):
+        row = _obj(item)
+        parsed = {}
+        for key, max_len in fields:
+            raw = row.get(key)
+            parsed[key] = _text(raw if isinstance(raw, str) else "", f"{path}.{i}.{key}", errors, max_len, required=False)
+        if any(parsed.values()):
+            if not all(parsed.values()):
+                _err(errors, f"{path}.{i}", "Fill in every part of the row, or leave the whole row blank.")
+            cleaned.append(parsed)
+    return cleaned
+
+
+def _company_contact(contact: dict, errors: dict, whatsapp: str) -> dict:
+    defaults = _default_contact()
+
+    def text_field(key: str, max_len: int) -> str:
+        if key not in contact:
+            return defaults[key]
+        raw = contact.get(key)
+        return _text(raw if isinstance(raw, str) else "", f"contact.{key}", errors, max_len, required=False)
+
+    if "mapUrl" not in contact:
+        map_url = defaults["mapUrl"]
+    else:
+        raw_map = contact.get("mapUrl")
+        map_url = "" if not isinstance(raw_map, str) or not raw_map.strip() else _link_value(raw_map, "contact.mapUrl", errors, allow_empty=True)
+    email = defaults["email"] if "email" not in contact else _email(contact.get("email"), "contact.email", errors)
+    return {
+        "whatsapp": whatsapp,
+        "name": text_field("name", 80),
+        "title": text_field("title", 80),
+        "email": email,
+        "phones": _detail_rows(
+            contact.get("phones") if "phones" in contact else None,
+            "contact.phones",
+            errors,
+            defaults["phones"],
+            limit=2,
+            fields=(("label", 24), ("display", 40)),
+        ),
+        "address": text_field("address", 160),
+        "mapUrl": map_url,
+        "hours": _detail_rows(
+            contact.get("hours") if "hours" in contact else None,
+            "contact.hours",
+            errors,
+            defaults["hours"],
+            limit=4,
+            fields=(("days", 40), ("hours", 40)),
+        ),
+    }
+
+
 def _chrome(document: dict, errors: dict) -> dict:
     announcement = _obj(document.get("announcement"))
     items = _items(announcement.get("items"), "announcement.items", errors, 1, 6)
     nav = _obj(document.get("nav"))
     links = _items(nav.get("links"), "nav.links", errors, 2, 8)
     footer = _obj(document.get("footer"))
-    socials = _items(footer.get("socials"), "footer.socials", errors, 0, 3)
+    socials = _items(footer.get("socials"), "footer.socials", errors, 0, 5)
     columns = _items(footer.get("columns"), "footer.columns", errors, 1, 4)
     contact = _obj(document.get("contact"))
     whatsapp = contact.get("whatsapp")
@@ -708,11 +803,11 @@ def _chrome(document: dict, errors: dict) -> dict:
         _err(errors, "contact.whatsapp", "Enter a WhatsApp number with country code, digits only.")
     cleaned_socials = []
     seen = set()
-    for i, item in enumerate(socials[:3]):
+    for i, item in enumerate(socials[:5]):
         row = _obj(item)
         network = row.get("network")
         if network not in SOCIALS or network in seen:
-            _err(errors, f"footer.socials.{i}.network", "Choose Facebook, X, or LinkedIn once each.")
+            _err(errors, f"footer.socials.{i}.network", "Choose Facebook, Instagram, YouTube, X, or LinkedIn once each.")
             continue
         seen.add(network)
         href = _link_value(row.get("href"), f"footer.socials.{i}.href", errors, allow_empty=True)
@@ -751,7 +846,7 @@ def _chrome(document: dict, errors: dict) -> dict:
             "socials": cleaned_socials,
             "columns": cleaned_columns,
         },
-        "contact": {"whatsapp": digits},
+        "contact": _company_contact(contact, errors, digits),
     }
 
 

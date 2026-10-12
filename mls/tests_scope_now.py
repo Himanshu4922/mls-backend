@@ -9,7 +9,7 @@ from rest_framework.test import APIClient
 
 from mls.models import Content, PreconActivityEvent, PropertyInquiry
 from mls.services.ai_assist import _safe_href
-from mls.services.inquiry_ghl import _inquiry_tags
+from mls.services.inquiry_ghl import _inquiry_tags, sync_inquiry_to_ghl
 from mls.services.lead_ghl import push_lead_to_ghl
 
 
@@ -111,3 +111,88 @@ class PushAndCrmTests(TestCase):
         )
         self.assertIn("market-trends", _inquiry_tags(market))
         self.assertIn("assignment-inquiry", _inquiry_tags(assignment))
+
+    @override_settings(GHL_API_KEY="test-key", GHL_LOCATION_ID="loc", GHL_USER_ID="")
+    @mock.patch("accounts.services._lead_details_field_id", return_value="")
+    @mock.patch("accounts.services.requests.put")
+    @mock.patch("accounts.services.requests.post")
+    def test_schedule_viewing_sends_the_reason_with_the_contact(self, post, put, _field):
+        message = "I'd like to schedule a showing for 10 King St (MLS® W123)."
+
+        def response(status, payload=None):
+            res = mock.Mock()
+            res.status_code = status
+            res.text = ""
+            res.json.return_value = payload or {}
+            return res
+
+        def post_side(url, **kwargs):
+            if str(url).endswith("/contacts/"):
+                return response(201, {"contact": {"id": "contact-1"}})
+            return response(201, {"id": "ok"})
+
+        post.side_effect = post_side
+        put.return_value = response(200, {})
+        inquiry = PropertyInquiry.objects.create(
+            first_name="Ada",
+            last_name="Lovelace",
+            email="ada-showing@example.com",
+            phone="4165550100",
+            intent="showing",
+            message=message,
+            listing_key="W123",
+        )
+        sync_inquiry_to_ghl(inquiry)
+        inquiry.refresh_from_db()
+        self.assertEqual(inquiry.ghl_contact_id, "contact-1")
+        self.assertIsNotNone(inquiry.ghl_synced_at)
+        self.assertFalse(inquiry.last_error)
+
+        created = post.call_args_list[0].kwargs["json"]
+        self.assertTrue(created["source"].startswith("Schedule viewing:"))
+        self.assertIn(message, created["source"])
+        self.assertIn("schedule-viewing", created["tags"])
+
+        notes = [call.kwargs["json"] for call in post.call_args_list if str(call.args[0]).endswith("/notes")]
+        comments = [call.kwargs["json"] for call in post.call_args_list if "/conversations/messages" in str(call.args[0])]
+        self.assertEqual(notes[0]["title"], "Schedule viewing")
+        self.assertIn(message, notes[0]["body"])
+        self.assertIn(message, comments[0]["message"])
+        self.assertEqual(comments[0]["type"], "InternalComment")
+        self.assertIn(message, put.call_args.kwargs["json"]["source"])
+
+    @override_settings(GHL_API_KEY="test-key", GHL_LOCATION_ID="loc", GHL_USER_ID="")
+    @mock.patch("accounts.services._lead_details_field_id", return_value="")
+    @mock.patch("accounts.services.requests.put")
+    @mock.patch("accounts.services.requests.post")
+    def test_existing_contact_still_receives_the_lead_reason(self, post, put, _field):
+        user = get_user_model().objects.create_user(
+            email="known@example.com",
+            password="safe-password-123",
+            first_name="Known",
+        )
+        user.ghl_contact_id = "existing-1"
+        user.save(update_fields=["ghl_contact_id"])
+
+        def response(status, payload=None):
+            res = mock.Mock()
+            res.status_code = status
+            res.text = ""
+            res.json.return_value = payload or {}
+            return res
+
+        post.return_value = response(201, {"id": "ok"})
+        put.return_value = response(200, {})
+        push_lead_to_ghl(
+            email=user.email,
+            first_name="Known",
+            source="newsletter",
+            tags=["newsletter"],
+            note="Newsletter sign-up from the homepage.",
+            user=user,
+        )
+        urls = [str(call.args[0]) for call in post.call_args_list]
+        self.assertFalse(any(url.endswith("/contacts/") for url in urls))
+        notes = [call.kwargs["json"] for call in post.call_args_list if str(call.args[0]).endswith("/notes")]
+        self.assertIn("Newsletter sign-up from the homepage.", notes[0]["body"])
+        self.assertIn("Newsletter sign-up", put.call_args.kwargs["json"]["source"])

@@ -11,9 +11,28 @@ import logging
 
 from django.contrib.auth import get_user_model
 
-from accounts.services import add_ghl_contact_note, create_ghl_contact
+from accounts.services import create_ghl_contact, describe_ghl_lead
 
 logger = logging.getLogger(__name__)
+
+_TITLES = {
+    "newsletter": "Newsletter sign-up",
+    "neighbour-alert": "Neighbour alert",
+    "assignment-submission": "Assignment submission",
+    "home-valuation": "Home valuation",
+}
+
+
+def _visible_source(title: str, body: str) -> str:
+    first = ""
+    for line in (body or "").splitlines():
+        line = " ".join(line.split())
+        if line and line.lower() != title.lower():
+            first = line
+            break
+    if first:
+        return f"{title}: {first}"[:180]
+    return title[:180]
 
 
 def push_lead_to_ghl(
@@ -27,10 +46,13 @@ def push_lead_to_ghl(
     note: str,
     user=None,
 ) -> None:
-    """Resolve or create a contact and attach a note. Never raises."""
+    """Resolve or create a contact and record what the lead is for. Never raises."""
     email = (email or "").strip()
     if not email:
         return
+    heading = _TITLES.get(source, (source or "HomeAtlas lead").replace("-", " ").strip().title())
+    visible = _visible_source(heading, note)
+    lead_tags = tags or [source]
     try:
         contact_id = None
         if user is not None and getattr(user, "ghl_contact_id", None):
@@ -53,14 +75,14 @@ def push_lead_to_ghl(
                 last_name or "",
                 email,
                 phone or None,
-                source=source,
-                tags=tags or [source],
+                source=visible,
+                tags=lead_tags,
             )
             if contact_id and user is not None and not getattr(user, "ghl_contact_id", None):
                 user.ghl_contact_id = contact_id
                 user.save(update_fields=["ghl_contact_id"])
 
         if contact_id and note:
-            add_ghl_contact_note(contact_id, note)
+            describe_ghl_lead(contact_id, title=heading, body=note, source=visible, tags=lead_tags)
     except Exception:
         logger.exception("push_lead_to_ghl failed for source=%s", source)

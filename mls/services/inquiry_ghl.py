@@ -5,7 +5,7 @@ import logging
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
-from accounts.services import add_ghl_contact_note, create_ghl_contact
+from accounts.services import create_ghl_contact, describe_ghl_lead
 from mls.models import PropertyInquiry
 
 logger = logging.getLogger(__name__)
@@ -16,6 +16,8 @@ def _inquiry_tags(inquiry: PropertyInquiry) -> list[str]:
     url = (inquiry.page_url or "").lower()
     key = (inquiry.listing_key or "").upper()
     tags = ["property-inquiry"]
+    if inquiry.intent == "showing":
+        tags.append("schedule-viewing")
     if "market-trends" in url or inquiry.intent == "explore":
         tags.append("market-trends")
     if "/assignments" in url or key.startswith("ASSIGNMENT-"):
@@ -25,9 +27,24 @@ def _inquiry_tags(inquiry: PropertyInquiry) -> list[str]:
     return tags
 
 
+def _lead_heading(inquiry: PropertyInquiry) -> str:
+    if inquiry.intent == "showing":
+        return "Schedule viewing"
+    return inquiry.get_intent_display() or "Property inquiry"
+
+
+def _lead_source(inquiry: PropertyInquiry) -> str:
+    """One line an agent can read on the contact without opening a note."""
+    heading = _lead_heading(inquiry)
+    message = " ".join((inquiry.message or "").split())
+    if message:
+        return f"{heading}: {message}"[:180]
+    return heading
+
+
 def _format_inquiry_note(inquiry: PropertyInquiry) -> str:
     lines = [
-        "Property inquiry (Find My Home)",
+        _lead_heading(inquiry),
         "",
         f"Intent: {inquiry.get_intent_display()}",
         f"Message:\n{inquiry.message}",
@@ -65,14 +82,17 @@ def sync_inquiry_to_ghl(inquiry: PropertyInquiry) -> None:
             if email_match and getattr(email_match, "ghl_contact_id", None):
                 contact_id = email_match.ghl_contact_id
 
+        heading = _lead_heading(inquiry)
+        source = _lead_source(inquiry)
+        tags = _inquiry_tags(inquiry)
         if not contact_id:
             contact_id = create_ghl_contact(
                 inquiry.first_name,
                 inquiry.last_name or "",
                 inquiry.email,
                 inquiry.phone or None,
-                source="property-inquiry",
-                tags=_inquiry_tags(inquiry),
+                source=source,
+                tags=tags,
             )
 
         if not contact_id:
@@ -85,12 +105,18 @@ def sync_inquiry_to_ghl(inquiry: PropertyInquiry) -> None:
         inquiry.ghl_contact_id = contact_id
         inquiry.save(update_fields=["ghl_contact_id", "updated_at"])
 
-        note_ok = add_ghl_contact_note(contact_id, _format_inquiry_note(inquiry))
+        note_ok = describe_ghl_lead(
+            contact_id,
+            title=heading,
+            body=_format_inquiry_note(inquiry),
+            source=source,
+            tags=tags,
+        )
         if note_ok:
             inquiry.ghl_synced_at = timezone.now()
             inquiry.save(update_fields=["ghl_synced_at", "updated_at"])
         else:
-            err = "GHL: contact saved but note failed."
+            err = "GHL: contact saved but the lead description could not be attached."
             inquiry.last_error = f"{(inquiry.last_error or '').strip()}\n{err}".strip()
             inquiry.save(update_fields=["last_error", "updated_at"])
     except Exception as e:
