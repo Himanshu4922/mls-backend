@@ -1821,7 +1821,7 @@ class ListingAISummaryAPIView(APIView):
 
         if not openai_client.is_configured():
             return Response(
-                {"error": "OPENAI_API_KEY is not configured on backend"},
+                {"error": "GEMINI_API_KEY is not configured on backend"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 

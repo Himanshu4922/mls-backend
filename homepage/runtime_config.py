@@ -47,7 +47,7 @@ FIELDS: tuple[dict, ...] = (
     {"key": "twilioAuthToken", "env": "TWILIO_AUTH_TOKEN", "setting": "TWILIO_AUTH_TOKEN", "public": False, "secret": True, "group": "Phone verification", "label": "Twilio auth token", "hint": ""},
     {"key": "twilioVerifyServiceSid", "env": "TWILIO_VERIFY_SERVICE_SID", "setting": "TWILIO_VERIFY_SERVICE_SID", "public": False, "secret": False, "group": "Phone verification", "label": "Twilio Verify service", "hint": "Starts with VA."},
     {"key": "twilioPhoneNumber", "env": "TWILIO_PHONE_NUMBER", "setting": "", "public": False, "secret": False, "group": "Phone verification", "label": "Twilio phone number", "hint": "Digits only, with country code."},
-    {"key": "openaiApiKey", "env": "OPENAI_API_KEY", "setting": "", "public": False, "secret": True, "group": "AI", "label": "OpenAI key", "hint": "AI search, listing summaries, and the assistant."},
+    {"key": "openaiApiKey", "env": "GEMINI_API_KEY", "also": ["OPENAI_API_KEY"], "setting": "", "public": False, "secret": True, "group": "AI", "label": "Gemini API key", "hint": "Paste the Gemini key here. Search, listing summaries, and the assistant use it."},
     {"key": "cloudinaryCloudName", "env": "CLOUDINARY_CLOUD_NAME", "setting": "", "public": False, "secret": False, "group": "Photos", "label": "Cloudinary cloud name", "hint": "Where uploaded photos and files are stored."},
     {"key": "cloudinaryApiKey", "env": "CLOUDINARY_API_KEY", "setting": "", "public": False, "secret": False, "group": "Photos", "label": "Cloudinary API key", "hint": ""},
     {"key": "cloudinaryApiSecret", "env": "CLOUDINARY_API_SECRET", "setting": "", "public": False, "secret": True, "group": "Photos", "label": "Cloudinary API secret", "hint": ""},
@@ -83,11 +83,11 @@ FIELDS: tuple[dict, ...] = (
     {"key": "savedSearchAlertsHourUtc", "env": "SAVED_SEARCH_ALERTS_HOUR_UTC", "setting": "", "public": False, "secret": False, "group": "Advanced", "label": "Saved-search alert hour", "hint": "Hour in UTC.", "fallback": "12"},
     {"key": "savedSearchAlertsMinuteUtc", "env": "SAVED_SEARCH_ALERTS_MINUTE_UTC", "setting": "", "public": False, "secret": False, "group": "Advanced", "label": "Saved-search alert minute", "hint": "Minute in UTC.", "fallback": "30"},
     {"key": "soldTrendsWarmBeatEnabled", "env": "SOLD_TRENDS_WARM_BEAT_ENABLED", "setting": "", "public": False, "secret": False, "group": "Advanced", "label": "Market trends warm-up", "hint": "1 turns it on. Needs the shared cache. The server picks this up the next time it starts.", "fallback": "0"},
-    {"key": "openaiBaseUrl", "env": "OPENAI_BASE_URL", "setting": "", "public": False, "secret": False, "group": "AI", "label": "OpenAI address", "hint": "Leave as the default unless you use another host."},
-    {"key": "openaiSearchModel", "env": "OPENAI_SEARCH_MODEL", "setting": "", "public": False, "secret": False, "group": "AI", "label": "Search model", "hint": ""},
-    {"key": "openaiSummaryModel", "env": "OPENAI_SUMMARY_MODEL", "setting": "", "public": False, "secret": False, "group": "AI", "label": "Summary model", "hint": ""},
-    {"key": "openaiEmbeddingModel", "env": "OPENAI_EMBEDDING_MODEL", "setting": "", "public": False, "secret": False, "group": "AI", "label": "Embedding model", "hint": ""},
-    {"key": "openaiEmbeddingDimensions", "env": "OPENAI_EMBEDDING_DIMENSIONS", "setting": "", "public": False, "secret": False, "group": "AI", "label": "Embedding size", "hint": ""},
+    {"key": "openaiBaseUrl", "env": "OPENAI_BASE_URL", "setting": "", "public": False, "secret": False, "group": "AI", "label": "Gemini address", "hint": "https://generativelanguage.googleapis.com/v1beta/openai"},
+    {"key": "openaiSearchModel", "env": "OPENAI_SEARCH_MODEL", "setting": "", "public": False, "secret": False, "group": "AI", "label": "Search model", "hint": "gemini-3.8-flash"},
+    {"key": "openaiSummaryModel", "env": "OPENAI_SUMMARY_MODEL", "setting": "", "public": False, "secret": False, "group": "AI", "label": "Summary model", "hint": "gemini-3.8-flash"},
+    {"key": "openaiEmbeddingModel", "env": "OPENAI_EMBEDDING_MODEL", "setting": "", "public": False, "secret": False, "group": "AI", "label": "Embedding model", "hint": "gemini-embedding-001. Re-embed listings after changing this."},
+    {"key": "openaiEmbeddingDimensions", "env": "OPENAI_EMBEDDING_DIMENSIONS", "setting": "", "public": False, "secret": False, "group": "AI", "label": "Embedding size", "hint": "512. Must match the vectors already stored, or listings must be re-embedded."},
     {"key": "aiAssistAnonRate", "env": "AI_ASSIST_ANON_RATE", "setting": "", "public": False, "secret": False, "group": "AI", "label": "Assistant limit for guests", "hint": "The server picks this up the next time it starts.", "fallback": "20/hour"},
     {"key": "aiAssistUserRate", "env": "AI_ASSIST_USER_RATE", "setting": "", "public": False, "secret": False, "group": "AI", "label": "Assistant limit for members", "hint": "The server picks this up the next time it starts.", "fallback": "60/hour"},
     {"key": "aiSearchAnonRate", "env": "AI_SEARCH_ANON_RATE", "setting": "", "public": False, "secret": False, "group": "AI", "label": "Search limit for guests", "hint": "The server picks this up the next time it starts.", "fallback": "30/hour"},
@@ -169,7 +169,12 @@ def configured(key: str) -> str:
         return stored
     import os
 
-    from_env = os.environ.get(_BY_KEY[key]["env"], "").strip()
+    field = _BY_KEY[key]
+    from_env = ""
+    for name in [field["env"], *field.get("also", [])]:
+        from_env = os.environ.get(name, "").strip()
+        if from_env:
+            break
     if from_env:
         return from_env
     attr = _BY_KEY[key]["setting"]

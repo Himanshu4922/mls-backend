@@ -19,7 +19,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         if not openai_client.is_configured():
-            raise CommandError("OPENAI_API_KEY is not set.")
+            raise CommandError("GEMINI_API_KEY is not set.")
         batch_size = options["batch_size"]
         if not 1 <= batch_size <= 2048:
             raise CommandError("--batch-size must be between 1 and 2048.")

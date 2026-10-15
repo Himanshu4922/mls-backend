@@ -279,7 +279,7 @@ def parse_search_query(text: str, current: Any = None) -> ParseResult:
         )
 
     if not openai_client.is_configured():
-        return fallback_result(text, "OPENAI_API_KEY is not configured.")
+        return fallback_result(text, "GEMINI_API_KEY is not configured.")
 
     user_message = f"REQUEST: {text}"
     if current_filters:

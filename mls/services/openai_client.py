@@ -3,7 +3,7 @@
 The SDK is deliberately not used: the Vercel bundle is size-capped and the
 three calls we make are plain JSON POSTs. Everything is configured from env:
 
-- ``OPENAI_API_KEY`` (required to enable any AI feature)
+- ``GEMINI_API_KEY`` (or ``OPENAI_API_KEY``) is required to enable any AI feature
 - ``OPENAI_BASE_URL`` (default ``https://api.openai.com/v1``)
 - ``OPENAI_SEARCH_MODEL`` — model that turns a search sentence into filters
 - ``OPENAI_SUMMARY_MODEL`` — comma-separated, tried in order for summaries
@@ -41,7 +41,7 @@ class ChatResult:
 
 
 def api_key() -> str:
-    return os.environ.get("OPENAI_API_KEY", "").strip()
+    return os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("OPENAI_API_KEY", "").strip()
 
 
 def is_configured() -> bool:
@@ -71,7 +71,7 @@ def embedding_dimensions() -> int:
 def _post(path: str, payload: dict[str, Any], timeout: float) -> dict[str, Any]:
     key = api_key()
     if not key:
-        raise OpenAIError("OPENAI_API_KEY is not configured on the backend.")
+        raise OpenAIError("GEMINI_API_KEY is not configured on the backend.")
     base = os.environ.get("OPENAI_BASE_URL", "").strip().rstrip("/") or DEFAULT_BASE_URL
     try:
         response = requests.post(

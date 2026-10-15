@@ -42,21 +42,72 @@ def _lead_source(inquiry: PropertyInquiry) -> str:
     return heading
 
 
+def _text(value) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _detail_line(label: str, value) -> str | None:
+    text = _text(value)
+    if not text:
+        return None
+    return f"{label}: {text}"
+
+
+def inquiry_detail_lines(inquiry: PropertyInquiry) -> list[str]:
+    """
+    Search criteria and page context for the CRM note and the realtor email.
+
+    Schedule viewing only collects a message, so property type, budget, beds,
+    baths and timeline are usually blank. Those lines are left out instead of
+    printed as dashes. A line is included only when the visitor actually
+    supplied it.
+    """
+    lines: list[str] = []
+
+    def add(line: str | None) -> None:
+        if line:
+            lines.append(line)
+
+    add(_detail_line("Preferred locations", inquiry.preferred_locations))
+    add(_detail_line("Property types", inquiry.property_types))
+
+    budget_min = inquiry.budget_min
+    budget_max = inquiry.budget_max
+    if budget_min is not None and budget_max is not None:
+        add(f"Budget: {budget_min} – {budget_max}")
+    elif budget_min is not None:
+        add(f"Budget min: {budget_min}")
+    elif budget_max is not None:
+        add(f"Budget max: {budget_max}")
+
+    beds = inquiry.bedrooms_min
+    baths = inquiry.bathrooms_min
+    if beds is not None and baths is not None:
+        add(f"Min beds / baths: {beds} / {baths}")
+    elif beds is not None:
+        add(f"Min beds: {beds}")
+    elif baths is not None:
+        add(f"Min baths: {baths}")
+
+    add(_detail_line("Timeline", inquiry.timeline))
+    add(_detail_line("Page URL", inquiry.page_url))
+    if inquiry.pk:
+        add(f"Inquiry ID (DB): {inquiry.pk}")
+    return lines
+
+
 def _format_inquiry_note(inquiry: PropertyInquiry) -> str:
     lines = [
         _lead_heading(inquiry),
         "",
         f"Intent: {inquiry.get_intent_display()}",
         f"Message:\n{inquiry.message}",
-        "",
-        f"Preferred locations: {inquiry.preferred_locations or '—'}",
-        f"Property types: {inquiry.property_types or '—'}",
-        f"Budget: {inquiry.budget_min or '—'} – {inquiry.budget_max or '—'}",
-        f"Min beds / baths: {inquiry.bedrooms_min or '—'} / {inquiry.bathrooms_min or '—'}",
-        f"Timeline: {inquiry.timeline or '—'}",
-        f"Page URL: {inquiry.page_url or '—'}",
-        f"Inquiry ID (DB): {inquiry.pk}",
     ]
+    details = inquiry_detail_lines(inquiry)
+    if details:
+        lines.extend(["", *details])
     return "\n".join(lines)
 
 

@@ -9,7 +9,7 @@ from rest_framework.test import APIClient
 
 from mls.models import Content, PreconActivityEvent, PropertyInquiry
 from mls.services.ai_assist import _safe_href
-from mls.services.inquiry_ghl import _inquiry_tags, sync_inquiry_to_ghl
+from mls.services.inquiry_ghl import _format_inquiry_note, _inquiry_tags, sync_inquiry_to_ghl
 from mls.services.lead_ghl import push_lead_to_ghl
 
 
@@ -157,9 +157,50 @@ class PushAndCrmTests(TestCase):
         comments = [call.kwargs["json"] for call in post.call_args_list if "/conversations/messages" in str(call.args[0])]
         self.assertEqual(notes[0]["title"], "Schedule viewing")
         self.assertIn(message, notes[0]["body"])
+        self.assertNotIn("Property types", notes[0]["body"])
+        self.assertNotIn("Budget", notes[0]["body"])
+        self.assertNotIn("Min beds", notes[0]["body"])
+        self.assertNotIn("Timeline", notes[0]["body"])
+        self.assertNotIn("—", notes[0]["body"])
         self.assertIn(message, comments[0]["message"])
         self.assertEqual(comments[0]["type"], "InternalComment")
         self.assertIn(message, put.call_args.kwargs["json"]["source"])
+
+    def test_inquiry_note_keeps_only_fields_the_visitor_filled(self):
+        showing = PropertyInquiry(
+            first_name="Ada",
+            email="ada@example.com",
+            intent="showing",
+            message="I'd like to schedule a showing for 26 Millcliff Circle.",
+            preferred_locations="26 Millcliff Circle",
+            page_url="https://homeatlas.test/property/29692917",
+        )
+        showing.pk = 94
+        note = _format_inquiry_note(showing)
+        self.assertIn("Preferred locations: 26 Millcliff Circle", note)
+        self.assertIn("Page URL: https://homeatlas.test/property/29692917", note)
+        self.assertIn("Inquiry ID (DB): 94", note)
+        self.assertNotIn("Property types", note)
+        self.assertNotIn("Budget", note)
+        self.assertNotIn("—", note)
+
+        buyer = PropertyInquiry(
+            first_name="Ada",
+            email="ada@example.com",
+            intent="buy",
+            message="Looking in the east end.",
+            property_types="Condo",
+            budget_min=500000,
+            budget_max=800000,
+            bedrooms_min=2,
+            bathrooms_min=1,
+            timeline="3-6 months",
+        )
+        filled = _format_inquiry_note(buyer)
+        self.assertIn("Property types: Condo", filled)
+        self.assertIn("Budget: 500000 – 800000", filled)
+        self.assertIn("Min beds / baths: 2 / 1", filled)
+        self.assertIn("Timeline: 3-6 months", filled)
 
     @override_settings(GHL_API_KEY="test-key", GHL_LOCATION_ID="loc", GHL_USER_ID="")
     @mock.patch("accounts.services._lead_details_field_id", return_value="")

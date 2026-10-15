@@ -262,7 +262,7 @@ def _fallback(question: str, error: str = "") -> AssistResult:
 def answer_question(question: str) -> AssistResult:
     question = question.strip()[:MAX_QUESTION_CHARS]
     if not is_configured():
-        return _fallback(question, "OPENAI_API_KEY is not configured.")
+        return _fallback(question, "GEMINI_API_KEY is not configured.")
 
     context = site_context(question)
     started = time.monotonic()
