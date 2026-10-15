@@ -34,7 +34,7 @@ PROMPT_VERSION = "v1"
 MAX_QUERY_CHARS = 300
 PARSE_CACHE_TTL = 24 * 60 * 60
 CITY_CACHE_TTL = 60 * 60
-PARSE_TIMEOUT_SECONDS = 10
+PARSE_TIMEOUT_SECONDS = 20
 
 PROPERTY_TYPES = ["Detached", "Semi-Detached", "Townhome", "Condo"]
 SORTS = ["newest", "price-asc", "price-desc", "beds-desc", "sqft-desc"]
@@ -301,6 +301,11 @@ def parse_search_query(text: str, current: Any = None) -> ParseResult:
         parsed = json.loads(result.content)
     except (openai_client.OpenAIError, ValueError) as exc:
         logger.warning("AI search parse failed: %s", exc)
+        fallback = fallback_result(text, str(exc)[:500])
+        fallback.latency_ms = int((time.monotonic() - started) * 1000)
+        return fallback
+    except Exception as exc:  # noqa: BLE001 - a parse failure must stay a search, not a 500
+        logger.exception("AI search parse crashed: %s", exc)
         fallback = fallback_result(text, str(exc)[:500])
         fallback.latency_ms = int((time.monotonic() - started) * 1000)
         return fallback

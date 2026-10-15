@@ -23,6 +23,8 @@ import requests
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_CHAT_MODEL = "gpt-4.1-mini"
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+GEMINI_CHAT_MODEL = "gemini-3.8-flash"
 DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
 DEFAULT_EMBEDDING_DIMENSIONS = 512
 
@@ -48,13 +50,31 @@ def is_configured() -> bool:
     return bool(api_key())
 
 
+def base_url() -> str:
+    explicit = os.environ.get("OPENAI_BASE_URL", "").strip().rstrip("/")
+    if explicit:
+        return explicit
+    if os.environ.get("GEMINI_API_KEY", "").strip() or api_key().startswith("AQ."):
+        return GEMINI_BASE_URL
+    return DEFAULT_BASE_URL
+
+
+def using_gemini() -> bool:
+    return "generativelanguage.googleapis.com" in base_url()
+
+
 def search_model() -> str:
-    return os.environ.get("OPENAI_SEARCH_MODEL", "").strip() or DEFAULT_CHAT_MODEL
+    explicit = os.environ.get("OPENAI_SEARCH_MODEL", "").strip()
+    if explicit:
+        return explicit
+    return GEMINI_CHAT_MODEL if using_gemini() else DEFAULT_CHAT_MODEL
 
 
 def summary_models() -> list[str]:
-    raw = os.environ.get("OPENAI_SUMMARY_MODEL", "").strip() or DEFAULT_CHAT_MODEL
-    return [m.strip() for m in raw.split(",") if m.strip()]
+    raw = os.environ.get("OPENAI_SUMMARY_MODEL", "").strip()
+    if raw:
+        return [m.strip() for m in raw.split(",") if m.strip()]
+    return [GEMINI_CHAT_MODEL if using_gemini() else DEFAULT_CHAT_MODEL]
 
 
 def embedding_model() -> str:
@@ -72,7 +92,7 @@ def _post(path: str, payload: dict[str, Any], timeout: float) -> dict[str, Any]:
     key = api_key()
     if not key:
         raise OpenAIError("GEMINI_API_KEY is not configured on the backend.")
-    base = os.environ.get("OPENAI_BASE_URL", "").strip().rstrip("/") or DEFAULT_BASE_URL
+    base = base_url()
     try:
         response = requests.post(
             f"{base}{path}",
@@ -109,6 +129,10 @@ def chat(
         "messages": messages,
         "max_completion_tokens": max_tokens,
     }
+    if using_gemini():
+        # Gemini 3 spends the token budget on thinking unless this is set, and
+        # then returns an empty message that search treats as a failure.
+        payload["reasoning_effort"] = "low"
     if json_schema is not None:
         payload["response_format"] = {
             "type": "json_schema",
