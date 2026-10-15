@@ -262,6 +262,124 @@ def fallback_result(text: str, error: str = "") -> ParseResult:
     return ParseResult(filters=filters, fallback=True, error=error)
 
 
+_LOCAL_TYPES = (
+    ("semi-detached", "Semi-Detached"),
+    ("semi detached", "Semi-Detached"),
+    ("townhouse", "Townhome"),
+    ("townhome", "Townhome"),
+    ("row house", "Townhome"),
+    ("detached", "Detached"),
+    ("condo", "Condo"),
+    ("apartment", "Condo"),
+    ("loft", "Condo"),
+)
+_LOCAL_CITIES = (
+    "Richmond Hill",
+    "Mississauga",
+    "Newmarket",
+    "Toronto",
+    "Brampton",
+    "Vaughan",
+    "Markham",
+    "Oakville",
+    "Pickering",
+    "Burlington",
+    "Ajax",
+    "Whitby",
+    "Oshawa",
+    "Milton",
+    "Aurora",
+)
+_LOCAL_TRAITS = (
+    ("backyard", "backyard"),
+    ("subway", "near subway"),
+    ("parking", "parking"),
+    ("garage", "garage"),
+    ("pool", "pool"),
+    ("renovated", "renovated"),
+    ("basement", "basement"),
+    ("waterfront", "waterfront"),
+    ("spacious", "large"),
+    ("large", "large"),
+    ("big", "large"),
+)
+
+
+def _local_money(chunk: str) -> int | None:
+    match = re.search(r"(\d+(?:\.\d+)?)\s*(k|m|million)?", chunk.replace(",", ""), re.I)
+    if not match:
+        return None
+    amount = float(match.group(1))
+    unit = (match.group(2) or "").lower()
+    if unit == "k":
+        amount *= 1_000
+    elif unit in ("m", "million"):
+        amount *= 1_000_000
+    elif amount < 10_000:
+        return None
+    return int(amount)
+
+
+def local_filters(text: str) -> dict[str, Any]:
+    """Beds, type, price and city read from the sentence itself.
+
+    Used when the model is missing or returns nothing, so a plain request
+    like "3 bedroom condo" still becomes filters instead of a keyword dump.
+    """
+    filters = empty_filters()
+    low = text.lower()
+
+    for needle, label in _LOCAL_TYPES:
+        if needle in low:
+            filters["property_type"] = label
+            break
+
+    beds = re.search(r"(\d+)\s*\+?\s*(?:bed(?:room)?s?|br)\b", low)
+    if beds:
+        filters["beds_min"] = int(beds.group(1))
+    baths = re.search(r"(\d+)\s*\+?\s*(?:bath(?:room)?s?|ba)\b", low)
+    if baths:
+        filters["baths_min"] = int(baths.group(1))
+
+    if re.search(r"\b(rent|lease|for rent)\b", low):
+        filters["transaction"] = "rent"
+    if re.search(r"\b(sold|recently sold)\b", low):
+        filters["listing_status"] = "sold"
+
+    ceiling = re.search(r"\b(?:under|below|less than|max(?:imum)?|up to)\s+\$?([0-9][0-9,\.]*\s*(?:k|m|million)?)", low)
+    floor = re.search(r"\b(?:over|above|more than|at least|min(?:imum)?)\s+\$?([0-9][0-9,\.]*\s*(?:k|m|million)?)", low)
+    if ceiling:
+        filters["price_max"] = _local_money(ceiling.group(1))
+    if floor:
+        filters["price_min"] = _local_money(floor.group(1))
+
+    for city in _LOCAL_CITIES:
+        if re.search(rf"\b{re.escape(city.lower())}\b", low):
+            filters["city"] = city
+            break
+
+    traits = []
+    for needle, label in _LOCAL_TRAITS:
+        if re.search(rf"\b{needle}\b", low) and label not in traits:
+            traits.append(label)
+    if traits:
+        filters["semantic_text"] = ", ".join(traits)
+    return filters
+
+
+def _with_local_filters(text: str, error: str = "", started: float | None = None) -> ParseResult:
+    recovered = validate_filters(local_filters(text))
+    useful = any(recovered.get(key) not in (None, [], "") for key in recovered if key != "unsupported")
+    result = (
+        ParseResult(filters=recovered, unsupported=recovered["unsupported"], error=error)
+        if useful
+        else fallback_result(text, error)
+    )
+    if started is not None:
+        result.latency_ms = int((time.monotonic() - started) * 1000)
+    return result
+
+
 def parse_search_query(text: str, current: Any = None) -> ParseResult:
     text = normalize_query(text)
     current_filters = _clean_current(current)
@@ -279,7 +397,7 @@ def parse_search_query(text: str, current: Any = None) -> ParseResult:
         )
 
     if not openai_client.is_configured():
-        return fallback_result(text, "GEMINI_API_KEY is not configured.")
+        return _with_local_filters(text, "GEMINI_API_KEY is not configured.")
 
     user_message = f"REQUEST: {text}"
     if current_filters:
@@ -301,14 +419,10 @@ def parse_search_query(text: str, current: Any = None) -> ParseResult:
         parsed = json.loads(result.content)
     except (openai_client.OpenAIError, ValueError) as exc:
         logger.warning("AI search parse failed: %s", exc)
-        fallback = fallback_result(text, str(exc)[:500])
-        fallback.latency_ms = int((time.monotonic() - started) * 1000)
-        return fallback
+        return _with_local_filters(text, str(exc)[:500], started)
     except Exception as exc:  # noqa: BLE001 - a parse failure must stay a search, not a 500
         logger.exception("AI search parse crashed: %s", exc)
-        fallback = fallback_result(text, str(exc)[:500])
-        fallback.latency_ms = int((time.monotonic() - started) * 1000)
-        return fallback
+        return _with_local_filters(text, str(exc)[:500], started)
 
     filters = validate_filters(parsed)
     cache.set(key, {"filters": filters, "model": result.model}, PARSE_CACHE_TTL)

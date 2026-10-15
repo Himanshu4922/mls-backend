@@ -25,6 +25,7 @@ DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_CHAT_MODEL = "gpt-4.1-mini"
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 GEMINI_CHAT_MODEL = "gemini-3.8-flash"
+_USABLE_GEMINI_MODELS = {GEMINI_CHAT_MODEL}
 DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
 DEFAULT_EMBEDDING_DIMENSIONS = 512
 
@@ -65,9 +66,11 @@ def using_gemini() -> bool:
 
 def search_model() -> str:
     explicit = os.environ.get("OPENAI_SEARCH_MODEL", "").strip()
-    if explicit:
+    if using_gemini() and explicit in _USABLE_GEMINI_MODELS:
         return explicit
-    return GEMINI_CHAT_MODEL if using_gemini() else DEFAULT_CHAT_MODEL
+    if using_gemini():
+        return GEMINI_CHAT_MODEL
+    return explicit or DEFAULT_CHAT_MODEL
 
 
 def summary_models() -> list[str]:

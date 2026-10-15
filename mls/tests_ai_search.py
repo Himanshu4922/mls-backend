@@ -99,8 +99,10 @@ class ParseSearchQueryTests(TestCase):
     @mock.patch.object(openai_client, "chat", side_effect=OpenAIError("[HTTP 500] boom"))
     def test_openai_failure_falls_back_to_keywords(self, _chat):
         result = ai_search.parse_search_query("house with a pool in Oakville")
-        self.assertTrue(result.fallback)
-        self.assertEqual(result.filters["keywords"], "house with a pool in Oakville")
+        self.assertFalse(result.fallback)
+        self.assertEqual(result.filters["city"], "Oakville")
+        self.assertEqual(result.filters["semantic_text"], "pool")
+        self.assertIsNone(result.filters["keywords"])
         self.assertIn("boom", result.error)
 
     @mock.patch.object(openai_client, "chat")
@@ -111,10 +113,12 @@ class ParseSearchQueryTests(TestCase):
         self.assertIn('"price_max": 900000', user_message)
         self.assertNotIn("evil", user_message)
 
-    def test_not_configured_falls_back(self):
-        with mock.patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
+    def test_not_configured_still_reads_the_sentence(self):
+        with mock.patch.dict(os.environ, {"OPENAI_API_KEY": "", "GEMINI_API_KEY": ""}):
             result = ai_search.parse_search_query("condo in Toronto")
-        self.assertTrue(result.fallback)
+        self.assertFalse(result.fallback)
+        self.assertEqual(result.filters["property_type"], "Condo")
+        self.assertEqual(result.filters["city"], "Toronto")
 
 
 @mock.patch.dict(os.environ, KEY_ENV)
