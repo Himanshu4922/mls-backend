@@ -22,12 +22,16 @@ def _inquiry_tags(inquiry: PropertyInquiry) -> list[str]:
         tags.append("market-trends")
     if "/assignments" in url or key.startswith("ASSIGNMENT-"):
         tags.append("assignment-inquiry")
-    if "/preconstruction" in url or key.startswith("PRECON-"):
+    if inquiry.is_vip_list:
+        tags.append("precon-vip")
+    if "/preconstruction" in url or key.startswith("PRECON-") or inquiry.is_vip_list:
         tags.append("precon-inquiry")
     return tags
 
 
 def _lead_heading(inquiry: PropertyInquiry) -> str:
+    if inquiry.is_vip_list:
+        return "VIP preconstruction access"
     if inquiry.intent == "showing":
         return "Schedule viewing"
     return inquiry.get_intent_display() or "Property inquiry"
