@@ -1501,8 +1501,15 @@ class ListingSubmission(models.Model):
     country = models.CharField(max_length=80, default="Canada")
 
     property_type = models.CharField(max_length=100)
+    # Freehold / Condo/Strata / Leasehold — asked on assignment intake.
+    ownership_title = models.CharField(max_length=80, blank=True)
     bedrooms = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True)
     bathrooms = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True)
+    storeys = models.PositiveSmallIntegerField(null=True, blank=True)
+    floors = models.CharField(max_length=80, blank=True)
+    parking = models.CharField(max_length=120, blank=True)
+    locker = models.CharField(max_length=120, blank=True)
+    maintenance_fees = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     interior_area_sqft = models.PositiveIntegerField(null=True, blank=True)
     asking_price = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
     available_from = models.DateField(null=True, blank=True)
@@ -1520,10 +1527,12 @@ class ListingSubmission(models.Model):
         blank=True,
         on_delete=models.SET_NULL,
     )
+    agreement_date = models.DateField(null=True, blank=True)
     occupancy_date = models.DateField(null=True, blank=True)
     original_purchase_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     deposit_paid = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     assignment_fee = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    consent_to_advertise = models.BooleanField(default=False)
 
     contact_name = models.CharField(max_length=255)
     contact_email = models.EmailField()

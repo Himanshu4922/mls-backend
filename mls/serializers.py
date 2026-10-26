@@ -321,13 +321,14 @@ class ListingSubmissionSerializer(serializers.ModelSerializer):
         fields = [
             "id", "submitter_type", "submitter_type_label", "purpose", "purpose_label",
             "status", "status_label", "address_line_1", "address_line_2", "city",
-            "province", "postal_code", "country", "property_type", "bedrooms", "bathrooms",
-            "interior_area_sqft", "asking_price", "available_from", "description",
-            "project_name", "builder_name", "precon_property", "occupancy_date",
-            "original_purchase_price", "deposit_paid", "assignment_fee",
-            "contact_name", "contact_email", "contact_phone", "ownership_confirmed",
-            "publication_consent", "review_note", "submitted_at", "reviewed_at", "created_at",
-            "updated_at", "media",
+            "province", "postal_code", "country", "property_type", "ownership_title",
+            "bedrooms", "bathrooms", "storeys", "floors", "parking", "locker",
+            "maintenance_fees", "interior_area_sqft", "asking_price", "available_from",
+            "description", "project_name", "builder_name", "precon_property",
+            "agreement_date", "occupancy_date", "original_purchase_price", "deposit_paid",
+            "assignment_fee", "consent_to_advertise", "contact_name", "contact_email",
+            "contact_phone", "ownership_confirmed", "publication_consent", "review_note",
+            "submitted_at", "reviewed_at", "created_at", "updated_at", "media",
         ]
         read_only_fields = [
             "id", "status", "review_note", "submitted_at", "reviewed_at", "created_at",
@@ -378,11 +379,13 @@ class PublicListingSubmissionSerializer(serializers.ModelSerializer):
         model = ListingSubmission
         fields = [
             "id", "source_label", "purpose", "address_line_1", "address_line_2", "city",
-            "province", "postal_code", "country", "property_type", "bedrooms", "bathrooms",
-            "interior_area_sqft", "asking_price", "available_from", "description",
+            "province", "postal_code", "country", "property_type", "ownership_title",
+            "bedrooms", "bathrooms", "storeys", "floors", "parking", "locker",
+            "maintenance_fees", "interior_area_sqft", "asking_price", "available_from",
+            "description",
             # Assignment context that is safe to publish; the seller's purchase
             # price, deposit and assignment fee stay private to the reviewer.
-            "project_name", "builder_name", "occupancy_date", "media",
+            "project_name", "builder_name", "agreement_date", "occupancy_date", "media",
             "precon_property", "published_at",
         ]
 
