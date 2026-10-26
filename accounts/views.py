@@ -670,6 +670,10 @@ class ProfileView(APIView):
     def get(self, request):
         return Response(UserProfileSerializer(request.user).data)
 
+    def patch(self, request):
+        # Same handler as PUT — both accept partial profile updates.
+        return self.put(request)
+
     def put(self, request):
         user = request.user
         serializer = UserProfileSerializer(user, data=request.data, partial=True)
