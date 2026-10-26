@@ -159,7 +159,11 @@ class ValuationEstimateAPIView(APIView):
             return Response({"detail": "Invalid JSON"}, status=status.HTTP_400_BAD_REQUEST)
 
         listing_key = (body.get("listing_key") or "").strip() or None
-        prop = Property.objects.filter(listing_key=listing_key).first() if listing_key else None
+        prop = (
+            Property.objects.filter(listing_key=listing_key).prefetch_related("rooms").first()
+            if listing_key
+            else None
+        )
 
         postal = body.get("postal_code") or (prop.postal_code if prop else "") or ""
         city = body.get("city") or (prop.city if prop else "") or ""
@@ -257,7 +261,9 @@ class ValuationEstimateAPIView(APIView):
         # then come back empty and render as dashes.
         comp_props = {
             p.listing_key: p
-            for p in Property.objects.filter(listing_key__in=[c.get("listing_key") for c in comps if c.get("listing_key")])
+            for p in Property.objects.filter(
+                listing_key__in=[c.get("listing_key") for c in comps if c.get("listing_key")]
+            ).prefetch_related("rooms")
         }
         comps_out = []
         for c in comps:
