@@ -18,6 +18,7 @@ from .models import Property, SearchEvent
 from .serializers import PropertySerializer
 from .services.listing_embeddings import rank_ids
 from .services.query_helpers import (
+    apply_structure_filters,
     price_field_for,
     _apply_fallback_pipeline,
     _apply_open_house_filters,
@@ -92,6 +93,9 @@ class PropertyFilterView(APIView):
             OpenApiParameter("sqft_min", OpenApiTypes.INT, OpenApiParameter.QUERY, required=False, description="Minimum building_area_total."),
             OpenApiParameter("sqft_max", OpenApiTypes.INT, OpenApiParameter.QUERY, required=False, description="Maximum building_area_total."),
             OpenApiParameter("year_built_min", OpenApiTypes.INT, OpenApiParameter.QUERY, required=False, description="Minimum year_built."),
+            OpenApiParameter("garages_min", OpenApiTypes.INT, OpenApiParameter.QUERY, required=False, description="Minimum garage / parking spaces."),
+            OpenApiParameter("stories_min", OpenApiTypes.INT, OpenApiParameter.QUERY, required=False, description="Minimum number of floors/stories."),
+            OpenApiParameter("basement", OpenApiTypes.STR, OpenApiParameter.QUERY, required=False, description="Basement: yes | finished | unfinished | apartment | none."),
             OpenApiParameter("has_open_house", OpenApiTypes.BOOL, OpenApiParameter.QUERY, required=False, description="Restrict to listings with an upcoming open house (defaults to today onwards)."),
             OpenApiParameter("open_house_from", OpenApiTypes.DATE, OpenApiParameter.QUERY, required=False, description="Open-house date lower bound (YYYY-MM-DD)."),
             OpenApiParameter("open_house_to", OpenApiTypes.DATE, OpenApiParameter.QUERY, required=False, description="Open-house date upper bound (YYYY-MM-DD)."),
@@ -148,11 +152,22 @@ class PropertyFilterView(APIView):
                 qs = qs.filter(building_area_total__lte=int(request.GET.get("sqft_max")))
             if request.GET.get("year_built_min"):
                 qs = qs.filter(year_built__gte=int(request.GET.get("year_built_min")))
+            if request.GET.get("garages_min"):
+                int(request.GET.get("garages_min"))  # validate early; applied below
+            if request.GET.get("stories_min"):
+                int(request.GET.get("stories_min"))
         except (TypeError, ValueError):
             return Response(
-                {"error": "price_min/price_max/beds_min/baths_min/sqft_min/sqft_max/year_built_min must be integers."},
+                {
+                    "error": (
+                        "price_min/price_max/beds_min/baths_min/sqft_min/sqft_max/"
+                        "year_built_min/garages_min/stories_min must be integers."
+                    )
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        qs = apply_structure_filters(qs, request.GET)
 
         sub_type_values: list[str] = []
         for raw in request.GET.getlist("property_sub_type"):

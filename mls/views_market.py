@@ -33,6 +33,7 @@ from .models import Property, PropertyInquiry
 from .services.ampre_client import AmpreClientError, fetch_property_page
 from .services.query_helpers import (
     STATUS_GROUPS,
+    apply_structure_filters,
     _apply_location_filters,
     cities_match_q,
     city_match_q,
@@ -94,9 +95,14 @@ def _apply_facet_filters(qs, params) -> Any:
         if params.get("sqft_max"):
             qs = qs.filter(building_area_total__lte=int(params.get("sqft_max")))
         if params.get("year_built_min"):
-            qs = qs.filter(year_built__gte=int(params.get("year_built_min")))
+            int(params.get("year_built_min"))
+        if params.get("garages_min"):
+            int(params.get("garages_min"))
+        if params.get("stories_min"):
+            int(params.get("stories_min"))
     except (TypeError, ValueError):
         return None
+    qs = apply_structure_filters(qs, params)
     sub_types: list[str] = []
     for raw in params.getlist("property_sub_type") if hasattr(params, "getlist") else [params.get("property_sub_type", "")]:
         for value in str(raw or "").split(","):
@@ -140,6 +146,9 @@ class PropertyFacetsAPIView(APIView):
             OpenApiParameter("sqft_min", OpenApiTypes.INT, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("sqft_max", OpenApiTypes.INT, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("year_built_min", OpenApiTypes.INT, OpenApiParameter.QUERY, required=False),
+            OpenApiParameter("garages_min", OpenApiTypes.INT, OpenApiParameter.QUERY, required=False),
+            OpenApiParameter("stories_min", OpenApiTypes.INT, OpenApiParameter.QUERY, required=False),
+            OpenApiParameter("basement", OpenApiTypes.STR, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("postal_code", OpenApiTypes.STR, OpenApiParameter.QUERY, required=False, description="CSV of FSAs (L7A) and/or full codes (L7A3K9)."),
         ],
         responses={
