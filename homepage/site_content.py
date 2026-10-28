@@ -87,6 +87,12 @@ def _default_sections() -> list[dict]:
                 "lines": ["Real Estate,", "Made", "Remarkably", "Smarter."],
                 "accentLine": 3,
                 "description": hero_desc,
+                "tryPrompts": [
+                    "3 bed condo under $900K near a subway in Toronto",
+                    "Family home in Oakville with a big backyard and double garage",
+                    "2 bedroom rental downtown under $3,000/month with parking",
+                    "Detached house in Vaughan with a basement apartment",
+                ],
             },
         },
         {
