@@ -12,7 +12,10 @@ from __future__ import annotations
 from urllib.parse import urlparse
 
 SCHEMA_VERSION = 1
-KEYS = ("homepage", "chrome", "seo")
+KEYS = ("homepage", "chrome", "seo", "curated")
+CURATED_GROUPS = ("Deals", "By price", "By type", "Rentals", "By city")
+CURATED_TYPES = ("Detached", "Semi-Detached", "Townhome", "Condo", "Luxury")
+CURATED_TRANSACTIONS = ("sale", "rent")
 HERO_IMAGE = "/images/hero/hero-bg.jpg"
 
 QUICK_ICONS = {"buy", "rent", "precon", "sell"}
@@ -65,6 +68,8 @@ def default_documents() -> dict[str, dict]:
             "shareImageUrl": "",
             "shareImageAlt": "",
         },
+        # Empty pages → public site keeps the code defaults in mls-v3 curatedPages.
+        "curated": {"pages": []},
     }
 
 
@@ -341,8 +346,10 @@ def validate_document(key: str, document: object) -> dict:
         cleaned = _homepage(document, errors)
     elif key == "chrome":
         cleaned = _chrome(document, errors)
-    else:
+    elif key == "seo":
         cleaned = _seo(document, errors)
+    else:
+        cleaned = _curated(document, errors)
     if errors:
         raise SiteValidationError(errors)
     return cleaned
@@ -873,3 +880,145 @@ def _seo(document: dict, errors: dict) -> dict:
         "shareImageUrl": image,
         "shareImageAlt": alt if image else "",
     }
+
+
+def _curated(document: dict, errors: dict) -> dict:
+    """Keyword / curated listing searches edited in Studio."""
+    import re
+
+    raw_pages = document.get("pages")
+    if raw_pages is None:
+        raw_pages = []
+    if not isinstance(raw_pages, list):
+        _err(errors, "pages", "Pages must be a list.")
+        return {"pages": []}
+    if len(raw_pages) > 80:
+        _err(errors, "pages", "Keep this to 80 searches or fewer.")
+
+    cleaned_pages: list[dict] = []
+    seen_slugs: set[str] = set()
+    for index, item in enumerate(raw_pages):
+        path = f"pages.{index}"
+        if not isinstance(item, dict):
+            _err(errors, path, "Each search must be an object.")
+            continue
+        slug = _text(item.get("slug"), f"{path}.slug", errors, 80)
+        if slug and not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", slug):
+            _err(errors, f"{path}.slug", "Use lowercase letters, numbers, and hyphens only.")
+        if slug in seen_slugs:
+            _err(errors, f"{path}.slug", "Each slug must be unique.")
+        if slug:
+            seen_slugs.add(slug)
+
+        group = item.get("group")
+        if group not in CURATED_GROUPS:
+            _err(errors, f"{path}.group", "Pick a group.")
+            group = "Deals"
+
+        query_raw = item.get("query") if isinstance(item.get("query"), dict) else {}
+        query = _curated_query(query_raw, f"{path}.query", errors)
+        enabled = item.get("enabled")
+        if not isinstance(enabled, bool):
+            enabled = True
+
+        cleaned_pages.append(
+            {
+                "slug": slug,
+                "label": _text(item.get("label"), f"{path}.label", errors, 60),
+                "h1": _text(item.get("h1"), f"{path}.h1", errors, 100),
+                "description": _text(item.get("description"), f"{path}.description", errors, 240),
+                "group": group,
+                "query": query,
+                "enabled": enabled,
+            }
+        )
+    return {"pages": cleaned_pages}
+
+
+def _curated_query(query: dict, path: str, errors: dict) -> dict:
+    status = query.get("status")
+    status_text = ""
+    if status is not None and status != "":
+        status_text = _text(status, f"{path}.status", errors, 40, required=False)
+
+    transaction = query.get("transaction")
+    if transaction in (None, ""):
+        transaction_out = None
+    elif transaction in CURATED_TRANSACTIONS:
+        transaction_out = transaction
+    else:
+        _err(errors, f"{path}.transaction", "Choose sale or rent.")
+        transaction_out = None
+
+    type_value = query.get("type")
+    if type_value in (None, ""):
+        type_out = None
+    elif type_value in CURATED_TYPES:
+        type_out = type_value
+    else:
+        _err(errors, f"{path}.type", "Pick a property type.")
+        type_out = None
+
+    def _opt_int(key: str, minimum: int = 0) -> int | None:
+        value = query.get(key)
+        if value in (None, ""):
+            return None
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            _err(errors, f"{path}.{key}", "Enter a whole number.")
+            return None
+        if number < minimum:
+            _err(errors, f"{path}.{key}", f"Must be at least {minimum}.")
+            return None
+        return number
+
+    keywords_raw = query.get("keywords")
+    keywords: list[str] = []
+    if isinstance(keywords_raw, list):
+        for i, word in enumerate(keywords_raw):
+            if not isinstance(word, str):
+                _err(errors, f"{path}.keywords.{i}", "Enter text.")
+                continue
+            cleaned = " ".join(word.split())
+            if not cleaned:
+                continue
+            if len(cleaned) > 80:
+                _err(errors, f"{path}.keywords.{i}", "Keep each keyword to 80 characters or fewer.")
+            keywords.append(cleaned)
+        if len(keywords) > 20:
+            _err(errors, f"{path}.keywords", "Use at most 20 keyword phrases.")
+            keywords = keywords[:20]
+    elif keywords_raw not in (None, ""):
+        _err(errors, f"{path}.keywords", "Keywords must be a list.")
+
+    city = query.get("city")
+    city_out = _text(city, f"{path}.city", errors, 80, required=False) if city not in (None, "") else None
+
+    open_house = query.get("openHouse")
+    if not isinstance(open_house, bool):
+        open_house = False
+
+    out: dict = {}
+    if status_text:
+        out["status"] = status_text
+    if transaction_out:
+        out["transaction"] = transaction_out
+    if type_out:
+        out["type"] = type_out
+    price_min = _opt_int("priceMin")
+    price_max = _opt_int("priceMax")
+    beds_min = _opt_int("bedsMin")
+    if price_min is not None:
+        out["priceMin"] = price_min
+    if price_max is not None:
+        out["priceMax"] = price_max
+    if beds_min is not None:
+        out["bedsMin"] = beds_min
+    if city_out:
+        out["city"] = city_out
+    if keywords:
+        out["keywords"] = keywords
+    if open_house:
+        out["openHouse"] = True
+    return out

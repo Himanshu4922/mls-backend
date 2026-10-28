@@ -43,10 +43,12 @@ class SiteContent(models.Model):
     HOMEPAGE = "homepage"
     CHROME = "chrome"
     SEO = "seo"
+    CURATED = "curated"
     KEYS = [
         (HOMEPAGE, "Homepage"),
         (CHROME, "Header, footer, and contact"),
         (SEO, "SEO"),
+        (CURATED, "Keyword searches"),
     ]
 
     key = models.CharField(max_length=32, unique=True, choices=KEYS)
