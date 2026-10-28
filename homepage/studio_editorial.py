@@ -84,8 +84,16 @@ class StudioCommunityImageListView(_Staff):
 
 class StudioCommunityImageDetailView(_Staff):
     def patch(self, request, city_key: str):
-        row = get_object_or_404(CommunityImage, city_key=city_key.strip().lower())
-        serializer = CommunityImageSerializer(row, data=request.data, partial=True)
+        key = city_key.strip().lower()
+        row = CommunityImage.objects.filter(city_key=key).first()
+        payload = {**dict(request.data), "city_key": key}
+        if row is None:
+            # First save for a city that only had a frontend fallback photo.
+            serializer = CommunityImageSerializer(data=payload)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        serializer = CommunityImageSerializer(row, data=payload, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)

@@ -13,6 +13,7 @@ class BuyerIncentiveSerializer(serializers.ModelSerializer):
             "id", "title", "label", "icon", "amount_text", "description",
             "source_url", "reviewed_at", "is_active", "display_order",
         ]
+        read_only_fields = ["id"]
 
 
 class PartnerSerializer(serializers.ModelSerializer):
@@ -22,6 +23,7 @@ class PartnerSerializer(serializers.ModelSerializer):
             "id", "name", "category", "description", "logo_url", "website_url",
             "is_active", "display_order",
         ]
+        read_only_fields = ["id"]
 
 
 class CommunityImageSerializer(serializers.ModelSerializer):
