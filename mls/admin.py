@@ -57,8 +57,17 @@ def infer_attachment_mime_type(url):
 
 PRECON_META_KEY_GUIDE = (
     ("developer", "Builder or developer name", "Empire Communities"),
-    ("occupancy_year", "Expected occupancy/completion year", "2028"),
+    ("city", "City (after address)", "Vaughan"),
+    ("neighbourhood", "Neighbourhood / community", "VMC"),
+    ("province", "Province / state", "ON"),
+    ("location_display", "Location label shown to visitors", "Vaughan Metropolitan Centre"),
+    ("occupancy_year", "Estimated occupancy / completion year", "2028"),
+    ("ownership_type", "Freehold, condominium, or other", "Freehold"),
     ("property_types", "Comma-separated home types", "Townhomes, Detached Homes"),
+    ("stories", "Number of stories", "3"),
+    ("basement", "Basement finish / type", "Finished"),
+    ("maintenance_fees", "Monthly maintenance fees where applicable", "$450/mo"),
+    ("signing_amount", "Amount due on signing", "$5,000"),
     ("price_display", "Marketing price shown to visitors", "From $699,900"),
     ("bedrooms_min", "Lowest bedroom count", "2"),
     ("bedrooms_max", "Highest bedroom count", "4"),

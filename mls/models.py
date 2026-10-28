@@ -1430,6 +1430,8 @@ class PreComProperty(models.Model):
         blank=True,
     )
 
+    updated_at = models.DateTimeField(auto_now=True)
+
 
 class PreComFloorPlanIntent(models.Model):
     """An authenticated, phone-verified request to view a pre-con floor plan."""

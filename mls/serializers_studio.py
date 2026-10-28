@@ -49,7 +49,7 @@ class StudioPreconDetailSerializer(StudioPreconListSerializer):
     class Meta(StudioPreconListSerializer.Meta):
         fields = StudioPreconListSerializer.Meta.fields + [
             "wp_id", "body", "excerpt", "bedrooms", "bathrooms", "garages", "area",
-            "lot_size", "latitude", "longitude", "attachments", "meta",
+            "lot_size", "latitude", "longitude", "updated_at", "attachments", "meta",
         ]
 
     def get_attachments(self, obj):

@@ -148,6 +148,7 @@ class PreComPropertyDetailSerializer(serializers.ModelSerializer):
             "meta",
             "developer_name",
             "sales_stage",
+            "updated_at",
             "featured_image_url",
             "has_floor_plan",
             "has_price_list",
