@@ -2500,8 +2500,10 @@ class NearestSchoolAPIView(APIView):
 
         # Step 1: Query Overpass for schools near the point
         # overpass-api.de requires a non-stock User-Agent (otherwise 406 Not Acceptable).
+        # Keep Overpass short: on free Vercel a 30s hang becomes a platform 502
+        # and takes the whole property page with it. Empty schools > hard fail.
         overpass_query = (
-            f"[out:json][timeout:25];"
+            f"[out:json][timeout:8];"
             f"("
             f'way(around:{radius},{lat},{lon})["amenity"="school"];'
             f'way(around:{radius},{lat},{lon})["landuse"="education"];'
@@ -2518,14 +2520,18 @@ class NearestSchoolAPIView(APIView):
                 OVERPASS_URL,
                 data={"data": overpass_query},
                 headers=overpass_headers,
-                timeout=30,
+                timeout=10,
             )
             response.raise_for_status()  # Raise an exception for HTTP errors
-        except requests.exceptions.RequestException as e:
-            return Response(
-                {"error": f"Failed to query OpenStreetMap: {str(e)}"},
-                status=status.HTTP_502_BAD_GATEWAY
-            )
+        except requests.exceptions.RequestException:
+            empty = {
+                "user_location": {"lat": lat, "lon": lon},
+                "nearest_schools": [],
+                "total_found": 0,
+                "search_radius_m": radius,
+                "degraded": True,
+            }
+            return Response(empty, status=status.HTTP_200_OK)
 
         data = response.json()
 
@@ -2630,8 +2636,9 @@ class NearbyAmenitiesAPIView(APIView):
         if cached_payload is not None:
             return Response(cached_payload, status=status.HTTP_200_OK)
 
+        # Short Overpass budget so free-tier Vercel does not 502 the page.
         overpass_query = (
-            f"[out:json][timeout:25];("
+            f"[out:json][timeout:8];("
             f'node(around:{radius},{lat},{lon})["shop"="supermarket"];'
             f'node(around:{radius},{lat},{lon})["amenity"="cafe"];'
             f'node(around:{radius},{lat},{lon})["amenity"="restaurant"];'
@@ -2649,14 +2656,17 @@ class NearbyAmenitiesAPIView(APIView):
                 "https://overpass-api.de/api/interpreter",
                 data={"data": overpass_query},
                 headers=headers,
-                timeout=30,
+                timeout=10,
             )
             response.raise_for_status()
-        except requests.exceptions.RequestException as exc:
-            return Response(
-                {"error": f"Failed to query OpenStreetMap amenities: {str(exc)}"},
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
+        except requests.exceptions.RequestException:
+            empty = {
+                "origin": {"lat": lat, "lon": lon},
+                "radius_m": radius,
+                "categories": {"groceries": [], "cafes": [], "parks": [], "transit": []},
+                "degraded": True,
+            }
+            return Response(empty, status=status.HTTP_200_OK)
 
         grouped = {"groceries": [], "cafes": [], "parks": [], "transit": []}
         for element in response.json().get("elements", []):

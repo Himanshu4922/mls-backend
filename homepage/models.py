@@ -128,7 +128,7 @@ class Partner(OrderedActiveModel):
     name = models.CharField(max_length=160)
     category = models.CharField(max_length=80, help_text="e.g. 'Mortgage', 'Legal', 'Inspection'.")
     description = models.TextField(blank=True)
-    logo_url = models.URLField(blank=True)
+    logo_url = models.URLField(max_length=1000, blank=True)
     website_url = models.URLField(blank=True)
 
     class Meta(OrderedActiveModel.Meta):
@@ -144,7 +144,7 @@ class CommunityImage(models.Model):
 
     city_key = models.CharField(max_length=120, unique=True)
     city_label = models.CharField(max_length=120)
-    image_url = models.URLField()
+    image_url = models.URLField(max_length=1000)
     credit = models.CharField(max_length=160, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
