@@ -82,7 +82,13 @@ def save_precon(instance: PreComProperty | None, data: dict) -> PreComProperty:
             content=data.get("body", ""),
             excerpt=data.get("excerpt", ""),
         )
-        instance = PreComProperty(content=content)
+        # The public list sorts by published_at; stamp the first publication.
+        if content.status == Content.PUBLISH and content.published_at is None:
+            content.published_at = timezone.now()
+        content.save()
+        # ``create_precom_property_for_content`` may already have inserted the
+        # row on Content post_save — reuse it so the OneToOne does not collide.
+        instance, _ = PreComProperty.objects.get_or_create(content=content)
     else:
         content = instance.content
         for key, field in PRECON_CONTENT_FIELDS.items():
@@ -90,13 +96,10 @@ def save_precon(instance: PreComProperty | None, data: dict) -> PreComProperty:
                 setattr(content, field, data[key])
         if "slug" in data and not data["slug"]:
             content.slug = slugify(content.title)[:500] or "project"
+        if content.status == Content.PUBLISH and content.published_at is None:
+            content.published_at = timezone.now()
+        content.save()
 
-    # The public list sorts by published_at; stamp the first publication.
-    if content.status == Content.PUBLISH and content.published_at is None:
-        content.published_at = timezone.now()
-    content.save()
-
-    instance.content = content
     for field in PRECON_PROPERTY_FIELDS:
         if field in data:
             value = data[field]
@@ -166,7 +169,14 @@ class StudioPreconListCreateAPIView(APIView):
             instance = save_precon(None, serializer.validated_data)
         except IntegrityError:
             # Two creates raced for the same wp_id; one retry picks the next free one.
-            instance = save_precon(None, serializer.validated_data)
+            try:
+                instance = save_precon(None, serializer.validated_data)
+            except IntegrityError:
+                logger.exception("Studio pre-con create hit a uniqueness conflict twice")
+                return Response(
+                    {"detail": "Could not create that project. Try a different name or slug."},
+                    status=status.HTTP_409_CONFLICT,
+                )
         instance = _precon_queryset().get(pk=instance.pk)
         return Response(StudioPreconDetailSerializer(instance).data, status=status.HTTP_201_CREATED)
 

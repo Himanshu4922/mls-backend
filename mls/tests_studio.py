@@ -133,3 +133,36 @@ class StudioWpIdTests(SimpleTestCase):
             self.assertEqual(views_studio._next_wp_id(), views_studio.STUDIO_WP_ID_FLOOR + 1)
         with mock.patch.object(views_studio.Content.objects, "aggregate", return_value={"top": 10_000_005}):
             self.assertEqual(views_studio._next_wp_id(), 10_000_006)
+
+
+class SavePreconCreateTests(SimpleTestCase):
+    def test_create_reuses_row_inserted_by_content_signal(self):
+        """Content post_save already creates PreComProperty — create must not insert twice."""
+        content = mock.Mock()
+        content.status = "draft"
+        content.published_at = None
+        content.pk = 42
+        content.attachments = mock.Mock()
+        content.attachments.all.return_value = []
+        content.attachments.all().delete = mock.Mock()
+
+        precon = mock.Mock()
+        precon.is_featured = False
+        precon.content = content
+        precon.pk = 7
+
+        content_ctor = mock.Mock(return_value=content)
+        get_or_create = mock.Mock(return_value=(precon, True))
+
+        with mock.patch.object(views_studio, "_next_wp_id", return_value=10_000_001), mock.patch.object(
+            views_studio, "Content", content_ctor
+        ), mock.patch.object(
+            views_studio.PreComProperty.objects, "get_or_create", get_or_create
+        ), mock.patch.object(views_studio.Attachment.objects, "bulk_create"):
+            result = views_studio.save_precon(None, {"title": "Test name", "developer_name": "Acme"})
+
+        content.save.assert_called_once()
+        get_or_create.assert_called_once_with(content=content)
+        precon.save.assert_called_once()
+        self.assertIs(result, precon)
+        self.assertEqual(precon.developer_name, "Acme")
