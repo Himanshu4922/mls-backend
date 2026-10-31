@@ -273,7 +273,9 @@ class ValuationEstimateAPIView(APIView):
 
         comps = select_comps(subject)
         active_comps = select_active_comps(subject)
-        hed_comps = pricing_comps(comps)
+        hed_comps = pricing_comps(comps, active_comps)
+        if not hed_comps:
+            hed_comps = active_comps
         hed = apply_hedonic(subject, hed_comps or comps)
 
         fsa = _fsa_from_postal(postal)
@@ -281,27 +283,55 @@ class ValuationEstimateAPIView(APIView):
         mult = 1.0 + float(trend.get("applied") or 0)
 
         cma_point = float(hed["point"] or 0) * mult
+        # Last-resort anchors when comps are empty: prior sale, then city
+        # median sold from the trend series, then the subject's own list price.
+        if cma_point <= 0:
+            series = trend.get("series") or []
+            medians = [
+                float(p["median_sold_price"])
+                for p in series
+                if isinstance(p, dict) and p.get("median_sold_price")
+            ]
+            if medians:
+                cma_point = medians[-1] * mult
+            elif prop and prop.list_price:
+                cma_point = float(prop.list_price)
+            elif subject.get("last_sold_price"):
+                cma_point = float(subject["last_sold_price"]) * mult
+
         anchor = prior_sale_anchor(subject, trend)
         cma_point = blend_with_prior_anchor(cma_point, anchor)
 
         sold_for_ai = [c for c in comps if c.get("source") == "sold"]
-        ai = ai_cma.suggest(subject, sold_for_ai or comps, active_comps, trend, cma_point)
+        ai = ai_cma.suggest(
+            subject,
+            sold_for_ai or comps or active_comps,
+            active_comps,
+            trend,
+            cma_point,
+        )
         point = ai_cma.blend(cma_point, ai)
 
         # Rebuild range around the blended market using hedonic band ratios.
-        hed_point = float(hed["point"] or 0) or 1.0
-        low_ratio = float(hed["low"] or 0) / hed_point if hed_point else 0.92
-        high_ratio = float(hed["high"] or 0) / hed_point if hed_point else 1.08
+        hed_point = float(hed["point"] or 0)
+        if hed_point > 0 and float(hed.get("low") or 0) > 0:
+            low_ratio = float(hed["low"]) / hed_point
+            high_ratio = float(hed["high"]) / hed_point
+            qsl_ratio = float(hed["quick_sale_low"]) / hed_point
+            qsh_ratio = float(hed["quick_sale_high"]) / hed_point
+        else:
+            low_ratio, high_ratio, qsl_ratio, qsh_ratio = 0.88, 1.12, 0.85, 0.94
         low = point * low_ratio
         high = point * high_ratio
-        qsl = point * (float(hed["quick_sale_low"] or 0) / hed_point if hed_point else 0.89)
-        qsh = point * (float(hed["quick_sale_high"] or 0) / hed_point if hed_point else 0.94)
+        qsl = point * qsl_ratio
+        qsh = point * qsh_ratio
 
         agent = match_agent(fsa, city, city_region)
 
         sold_count = sum(1 for c in comps if c.get("source") == "sold")
+        pricing_n = len(hed_comps or comps)
         # WOWA targets ≥5 sold comps for a solid CMA.
-        sparse = (sold_count < 5 and len(comps) < 5) or point <= 0
+        sparse = (sold_count < 5 and pricing_n < 5) or point <= 0
 
         all_comp_rows = comps + [
             a for a in active_comps if a.get("listing_key") not in {c.get("listing_key") for c in comps}

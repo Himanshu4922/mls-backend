@@ -34,6 +34,34 @@ def _comp(**overrides):
 
 
 class CompFilterTests(SimpleTestCase):
+    def test_city_prefix_strips_toronto_district(self):
+        from mls.services.valuation.comps import _city_prefix
+
+        self.assertEqual(_city_prefix("Toronto C01"), "Toronto")
+        self.assertEqual(_city_prefix("Mississauga"), "Mississauga")
+        self.assertEqual(_city_prefix("Richmond Hill"), "Richmond Hill")
+
+    def test_ampre_row_without_coords_still_usable(self):
+        from mls.services.valuation.comps import _ampre_row_to_comp
+
+        comp = _ampre_row_to_comp(
+            {
+                "ListingKey": "A1",
+                "ClosePrice": 875000,
+                "CloseDate": "2026-05-01",
+                "City": "Toronto C01",
+                "PropertySubType": "Condo Apartment",
+                "BedroomsTotal": 2,
+                "UnparsedAddress": "1 Main St",
+            },
+            43.65,
+            -79.38,
+        )
+        self.assertIsNotNone(comp)
+        self.assertEqual(comp["source"], "sold")
+        self.assertEqual(comp["price"], 875000)
+        self.assertEqual(comp["distance_km"], 4.0)
+
     def test_wowa_pass_rejects_far_and_wrong_size(self):
         ok = _comp(distance_km=1.5, living_area=2000)
         far = _comp(distance_km=3.0, living_area=2000)

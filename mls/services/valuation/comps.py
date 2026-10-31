@@ -30,6 +30,9 @@ RESIDENTIAL_SOLD_CLAUSE = (
     "and PropertySubType ne 'Parking Space' and PropertySubType ne 'Locker'"
 )
 
+# Keep this aligned with fields proven in recent-sales / sold-trends queries.
+# Latitude/Longitude are omitted: AMPRE often 400s unknown $select fields, which
+# previously wiped the entire sold-comp set and produced a $0 estimate.
 AMPRE_SOLD_SELECT = [
     "ListingKey",
     "UnparsedAddress",
@@ -47,8 +50,6 @@ AMPRE_SOLD_SELECT = [
     "LivingAreaRange",
     "YearBuilt",
     "ApproximateAge",
-    "Latitude",
-    "Longitude",
     "ParkingTotal",
     "TaxAnnualAmount",
     "LotSizeArea",
@@ -178,7 +179,19 @@ def _days_on_market(close_date: Optional[str], entry_raw: Any) -> Optional[int]:
 
 
 def _city_prefix(city: Optional[str]) -> str:
-    return (city or "").strip()
+    """Normalize MLS city labels for AMPRE ``startswith(City, ...)``.
+
+    Local rows sometimes store district-coded cities like ``Toronto C01``.
+    AMPRE matches on the same pattern, so querying the bare municipality
+    (``Toronto``) finds every district; querying ``Toronto C01`` finds almost none.
+    """
+    text = (city or "").strip()
+    if not text:
+        return ""
+    m = re.match(r"^(.*?)\s+[CEWN]\d{2}\s*$", text, flags=re.IGNORECASE)
+    if m and m.group(1).strip():
+        return m.group(1).strip()
+    return text
 
 
 def _fetch_ampre_sold_rows(city: str, max_age_days: int, subtype: Optional[str]) -> List[Dict[str, Any]]:
@@ -231,18 +244,31 @@ def _ampre_row_to_comp(
     slng: float,
 ) -> Optional[Dict[str, Any]]:
     close_price = row.get("ClosePrice")
-    lat = row.get("Latitude")
-    lng = row.get("Longitude")
-    if not close_price or lat is None or lng is None:
+    if not close_price:
         return None
     try:
         price = float(close_price)
-        clat = float(lat)
-        clng = float(lng)
     except (TypeError, ValueError):
         return None
     if price <= 0:
         return None
+
+    # Lat/lng are ideal but not always returned by AMPRE. Keep the sold
+    # ClosePrice anyway and treat unknown distance as "same city" (~4 km).
+    clat: Optional[float] = None
+    clng: Optional[float] = None
+    distance_km = 4.0
+    lat = row.get("Latitude")
+    lng = row.get("Longitude")
+    if lat is not None and lng is not None:
+        try:
+            clat = float(lat)
+            clng = float(lng)
+            distance_km = round(haversine_km(slat, slng, clat, clng), 3)
+        except (TypeError, ValueError):
+            clat = clng = None
+            distance_km = 4.0
+
     close_date = _parse_ampre_date(row.get("CloseDate"))
     list_price = row.get("ListPrice") or row.get("OriginalListPrice")
     try:
@@ -295,7 +321,7 @@ def _ampre_row_to_comp(
         "unparsed_address": row.get("UnparsedAddress") or "",
         "city": row.get("City") or "",
         "city_region": row.get("CityRegion") or "",
-        "distance_km": round(haversine_km(slat, slng, clat, clng), 3),
+        "distance_km": distance_km,
         "source": "sold",
         "event_date": close_date,
         "days_on_market": _days_on_market(close_date, row.get("OriginalEntryTimestamp")),
@@ -573,7 +599,7 @@ def select_comps(
     max_age_days: int = 180,
     k: int = PRICING_K,
 ) -> List[Dict[str, Any]]:
-    """Pricing comps: AMPRE ClosePrice first, sold_proxy last resort.
+    """Pricing comps: AMPRE ClosePrice first, sold_proxy, then active listings.
 
     ``radius_km`` / ``max_age_days`` are retained for call-site compatibility;
     WOWA progressive passes own the real thresholds.
@@ -582,24 +608,55 @@ def select_comps(
     sold = _select_ampre_sold(subject, k=k)
     if len(sold) >= 3:
         return sold
-    if sold:
-        # Top up with proxies if AMPRE was thin.
-        existing = {c.get("listing_key") for c in sold}
-        for proxy in _select_sold_proxy(subject, k=k):
-            if proxy.get("listing_key") in existing:
-                continue
-            sold.append(proxy)
-            if len(sold) >= k:
-                break
-        sold.sort(key=lambda c: c["distance_km"])
+
+    existing = {c.get("listing_key") for c in sold if c.get("listing_key")}
+    for proxy in _select_sold_proxy(subject, k=k):
+        key = proxy.get("listing_key")
+        if key and key in existing:
+            continue
+        sold.append(proxy)
+        if key:
+            existing.add(key)
+        if len(sold) >= k:
+            break
+
+    if len(sold) >= 3:
+        sold.sort(key=lambda c: c.get("distance_km") or 99)
         return sold[:k]
-    return _select_sold_proxy(subject, k=k)
+
+    # Last resort: active asking prices so the wizard still returns a range.
+    for active in select_active_comps(subject, k=k):
+        key = active.get("listing_key")
+        if key and key in existing:
+            continue
+        sold.append(active)
+        if key:
+            existing.add(key)
+        if len(sold) >= max(3, k // 2):
+            break
+
+    sold.sort(key=lambda c: c.get("distance_km") or 99)
+    return sold[:k]
 
 
-def pricing_comps(comps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def pricing_comps(
+    comps: List[Dict[str, Any]],
+    active_comps: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
     """Comps that should drive the hedonic point (prefer real sold)."""
     sold = [c for c in comps if c.get("source") == "sold"]
     if len(sold) >= 3:
         return sold
-    # Include proxies / anything with a price when sold is thin.
-    return [c for c in comps if (c.get("price") or 0) > 0]
+    priced = [c for c in comps if (c.get("price") or 0) > 0]
+    if len(priced) >= 3:
+        return priced
+    # Fold in active listings when sold/proxy data is still too thin.
+    extras = active_comps or []
+    existing = {c.get("listing_key") for c in priced if c.get("listing_key")}
+    for row in extras:
+        key = row.get("listing_key")
+        if key and key in existing:
+            continue
+        if (row.get("price") or 0) > 0:
+            priced.append(row)
+    return priced
