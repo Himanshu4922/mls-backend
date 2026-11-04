@@ -180,6 +180,45 @@ class MapAggregationAndFilterTests(TestCase):
         self.assertIn(self.p1.listing_key, keys)
         self.assertNotIn(self.p2.listing_key, keys)
 
+    def _filter_keys(self, **params):
+        response = self.client.get(
+            "/api/mls/properties/filter/",
+            {"allow_fallback": "false", "limit": 30, **params},
+        )
+        self.assertEqual(response.status_code, 200)
+        return {row["listing_key"] for row in response.json()["results"]}
+
+    def test_property_filter_year_built_and_stories_max(self):
+        Property.objects.filter(pk=self.p1.pk).update(year_built=1990, stories=1)
+        Property.objects.filter(pk=self.p2.pk).update(year_built=2020, stories=3)
+        for params in ({"year_built_max": 2000}, {"stories_max": 2}):
+            keys = self._filter_keys(**params)
+            self.assertIn(self.p1.listing_key, keys)
+            self.assertNotIn(self.p2.listing_key, keys)
+
+    def test_property_filter_monthly_maintenance_fee(self):
+        Property.objects.filter(pk=self.p1.pk).update(association_fee=400, association_fee_frequency="Monthly")
+        Property.objects.filter(pk=self.p2.pk).update(association_fee=900, association_fee_frequency="Monthly")
+        keys = self._filter_keys(maintenance_fee_max=500)
+        self.assertIn(self.p1.listing_key, keys)
+        self.assertNotIn(self.p2.listing_key, keys)
+        keys = self._filter_keys(maintenance_fee_min=500)
+        self.assertIn(self.p2.listing_key, keys)
+        self.assertNotIn(self.p1.listing_key, keys)
+
+    def test_property_filter_listed_since(self):
+        Property.objects.filter(pk=self.p1.pk).update(original_entry_timestamp=timezone.now() - timedelta(days=2))
+        Property.objects.filter(pk=self.p2.pk).update(original_entry_timestamp=timezone.now() - timedelta(days=40))
+        since = (timezone.now() - timedelta(days=7)).date().isoformat()
+        keys = self._filter_keys(listed_since=since)
+        self.assertIn(self.p1.listing_key, keys)
+        self.assertNotIn(self.p2.listing_key, keys)
+
+    def test_property_filter_rejects_bad_new_filter_values(self):
+        for params in ({"listed_since": "soon"}, {"listed_since": "2026-02-31"}, {"maintenance_fee_max": "lots"}):
+            response = self.client.get("/api/mls/properties/filter/", params)
+            self.assertEqual(response.status_code, 400)
+
     def test_map_aggregates_respects_status_group_and_has_lease(self):
         response = self.client.get(
             "/api/mls/properties/map-aggregates/",
