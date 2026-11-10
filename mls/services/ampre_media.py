@@ -142,31 +142,43 @@ def refresh_property_media_from_ampre(prop: Property) -> int:
     return replace_property_media(prop, photos)
 
 
+def _needs_ampre_refresh(prop: Property, *, only_if_dead: bool) -> bool:
+    listing_id = (prop.listing_id or "").strip()
+    if not TRREB_LISTING_ID_RE.match(listing_id):
+        return False
+
+    preferred = (
+        prop.media.filter(is_preferred=True).order_by("order", "pk").first()
+        or prop.media.order_by("order", "pk").first()
+    )
+    # No gallery rows at all — common for DDF imports that omitted Media.
+    if preferred is None:
+        return True
+    if not only_if_dead:
+        return True
+    if preferred.media_url and url_ok(preferred.media_url):
+        return False
+    if preferred.media_url and "ampre.ca" in preferred.media_url:
+        # Already on AMPRE; leave alone even if the health check flaked.
+        return False
+    return True
+
+
 def repair_dead_ddf_media(
     properties: Iterable[Property],
     *,
     only_if_dead: bool = True,
 ) -> int:
-    """Replace gallery rows from AMPRE for TRREB listings with dead DDF URLs.
+    """Replace/backfill gallery rows from AMPRE for TRREB listings.
 
+    Covers both dead ``ddfcdn`` URLs and listings that have zero media rows.
     Returns the number of properties whose media was rewritten.
     """
     repaired = 0
     for prop in properties:
         listing_id = (prop.listing_id or "").strip()
-        if not TRREB_LISTING_ID_RE.match(listing_id):
+        if not _needs_ampre_refresh(prop, only_if_dead=only_if_dead):
             continue
-
-        if only_if_dead:
-            preferred = (
-                prop.media.filter(is_preferred=True).order_by("order", "pk").first()
-                or prop.media.order_by("order", "pk").first()
-            )
-            if preferred and preferred.media_url and url_ok(preferred.media_url):
-                continue
-            # Already on AMPRE and healthy ΓÇö nothing to do.
-            if preferred and "ampre.ca" in (preferred.media_url or ""):
-                continue
 
         try:
             written = refresh_property_media_from_ampre(prop)
@@ -181,3 +193,27 @@ def repair_dead_ddf_media(
                 listing_id,
             )
     return repaired
+
+
+def iter_active_trreb_needing_media(*, missing_only: bool = False) -> list[Property]:
+    """Active TRREB listings that need an AMPRE gallery refresh."""
+    qs = (
+        Property.objects.filter(standard_status="Active")
+        .exclude(listing_id="")
+        .order_by("id")
+    )
+    # Narrow in Python with the same board-id rule the sync uses; SQL regex
+    # dialects differ between Postgres and SQLite test runs.
+    out: list[Property] = []
+    for prop in qs.iterator(chunk_size=500):
+        listing_id = (prop.listing_id or "").strip()
+        if not TRREB_LISTING_ID_RE.match(listing_id):
+            continue
+        has_media = prop.media.exists()
+        if missing_only and has_media:
+            continue
+        if not missing_only and has_media:
+            # Caller will health-check preferred URLs; include for scanning.
+            pass
+        out.append(prop)
+    return out

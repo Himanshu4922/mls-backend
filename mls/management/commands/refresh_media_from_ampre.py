@@ -1,26 +1,33 @@
 ﻿"""
-Replace dead DDF CDN gallery URLs with live AMPRE (TRREB) MediaURLs.
+Replace dead/missing DDF gallery URLs with live AMPRE (TRREB) MediaURLs.
 
 Examples:
   python manage.py refresh_media_from_ampre --listing-id W12914842
-  python manage.py refresh_media_from_ampre --dead-preferred --limit 50
+  python manage.py refresh_media_from_ampre --missing --limit 500
+  python manage.py refresh_media_from_ampre --dead-preferred --limit 0
+  python manage.py refresh_media_from_ampre --all-active --limit 0
 """
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from django.core.management.base import BaseCommand, CommandError
+from django.db.models import Count, Prefetch
 
-from mls.models import Property
+from mls.models import Media, Property
 from mls.services.ampre_client import AmpreClientError
 from mls.services.ampre_media import (
+    TRREB_LISTING_ID_RE,
     refresh_property_media_from_ampre,
     url_ok,
 )
 
 
 class Command(BaseCommand):
-    help = "Refresh listing gallery URLs from AMPRE when DDF CDN links are dead."
+    help = (
+        "Refresh listing gallery URLs from AMPRE for dead DDF CDN links "
+        "and Active TRREB listings with no media rows."
+    )
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -28,7 +35,7 @@ class Command(BaseCommand):
             action="append",
             dest="listing_ids",
             default=[],
-            help="MLS┬« number (listing_id), repeatable.",
+            help="MLS® number (listing_id), repeatable.",
         )
         parser.add_argument(
             "--listing-key",
@@ -40,13 +47,23 @@ class Command(BaseCommand):
         parser.add_argument(
             "--dead-preferred",
             action="store_true",
-            help="Scan active listings whose preferred ddfcdn photo 404s.",
+            help="Scan Active listings whose preferred non-AMPRE photo 404s.",
+        )
+        parser.add_argument(
+            "--missing",
+            action="store_true",
+            help="Backfill Active TRREB listings that have zero media rows.",
+        )
+        parser.add_argument(
+            "--all-active",
+            action="store_true",
+            help="Equivalent to --missing plus --dead-preferred.",
         )
         parser.add_argument(
             "--limit",
             type=int,
-            default=40,
-            help="Max listings to repair in --dead-preferred mode (default 40).",
+            default=200,
+            help="Max listings to repair (0 = no limit). Default 200.",
         )
         parser.add_argument(
             "--force",
@@ -60,6 +77,14 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        if options["all_active"]:
+            options["missing"] = True
+            options["dead_preferred"] = True
+
+        limit = options["limit"]
+        unlimited = limit == 0
+        cap = None if unlimited else max(1, limit)
+
         targets: list[Property] = []
         listing_ids = options["listing_ids"] or []
         listing_keys = options["listing_keys"] or []
@@ -68,8 +93,16 @@ class Command(BaseCommand):
             targets.extend(list(Property.objects.filter(listing_id__in=listing_ids)))
         if listing_keys:
             targets.extend(list(Property.objects.filter(listing_key__in=listing_keys)))
+        if options["missing"]:
+            targets.extend(self._find_missing(cap))
         if options["dead_preferred"]:
-            targets.extend(self._find_dead_preferred(limit=max(1, options["limit"])))
+            # When both missing and dead are requested, spend remaining budget
+            # on dead preferred after missing.
+            remaining = None
+            if cap is not None:
+                remaining = max(0, cap - len({p.pk for p in targets}))
+            if remaining is None or remaining > 0:
+                targets.extend(self._find_dead_preferred(remaining if remaining is not None else 10_000))
 
         seen: set[int] = set()
         unique_targets: list[Property] = []
@@ -78,19 +111,29 @@ class Command(BaseCommand):
                 continue
             seen.add(prop.pk)
             unique_targets.append(prop)
+            if cap is not None and len(unique_targets) >= cap:
+                break
 
         if not unique_targets:
             raise CommandError(
-                "No properties selected. Pass --listing-id / --listing-key "
-                "or --dead-preferred."
+                "No properties selected. Pass --listing-id / --listing-key, "
+                "--missing, --dead-preferred, or --all-active."
             )
 
         repaired = 0
-        for prop in unique_targets:
+        for index, prop in enumerate(unique_targets, start=1):
             listing_id = (prop.listing_id or "").strip()
-            label = f"{listing_id or prop.listing_key} ({prop.unparsed_address or prop.listing_key})"
+            label = (
+                f"{listing_id or prop.listing_key} "
+                f"({prop.unparsed_address or prop.listing_key})"
+            )
             if not listing_id:
                 self.stdout.write(self.style.WARNING(f"Skip {label}: no listing_id"))
+                continue
+            if not TRREB_LISTING_ID_RE.match(listing_id):
+                self.stdout.write(
+                    self.style.WARNING(f"Skip {label}: not a TRREB-style MLS® id")
+                )
                 continue
 
             if not options["force"]:
@@ -108,7 +151,7 @@ class Command(BaseCommand):
                     continue
 
             if options["dry_run"]:
-                self.stdout.write(f"DRY-RUN {label}: would refresh from AMPRE")
+                self.stdout.write(f"DRY-RUN [{index}/{len(unique_targets)}] {label}")
                 continue
 
             try:
@@ -119,38 +162,82 @@ class Command(BaseCommand):
 
             if count:
                 repaired += 1
-                self.stdout.write(self.style.SUCCESS(f"{label}: wrote {count} photos"))
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        f"[{index}/{len(unique_targets)}] {label}: wrote {count} photos"
+                    )
+                )
             else:
-                self.stdout.write(self.style.WARNING(f"{label}: no AMPRE photos written"))
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"[{index}/{len(unique_targets)}] {label}: no AMPRE photos written"
+                    )
+                )
 
         self.stdout.write(self.style.NOTICE(f"Repaired {repaired} listing(s)."))
 
-    def _find_dead_preferred(self, limit: int) -> list[Property]:
-        rows = list(
-            Property.objects.filter(
-                standard_status="Active",
-                media__is_preferred=True,
-                media__media_url__istartswith="https://ddfcdn.realtor.ca",
-            )
+    def _find_missing(self, limit: int | None) -> list[Property]:
+        qs = (
+            Property.objects.filter(standard_status="Active")
             .exclude(listing_id="")
+            .annotate(media_count=Count("media"))
+            .filter(media_count=0)
+            .order_by("id")
+        )
+        out: list[Property] = []
+        for prop in qs.iterator(chunk_size=500):
+            if not TRREB_LISTING_ID_RE.match((prop.listing_id or "").strip()):
+                continue
+            out.append(prop)
+            if limit is not None and len(out) >= limit:
+                break
+        return out
+
+    def _find_dead_preferred(self, limit: int) -> list[Property]:
+        qs = (
+            Property.objects.filter(standard_status="Active")
+            .exclude(listing_id="")
+            .filter(
+                media__is_preferred=True,
+            )
+            .exclude(media__media_url__icontains="ampre.ca")
+            .prefetch_related(
+                Prefetch(
+                    "media",
+                    queryset=Media.objects.filter(is_preferred=True).order_by(
+                        "order", "pk"
+                    ),
+                    to_attr="preferred_media",
+                )
+            )
             .order_by("-photos_count", "id")
-            .distinct()[: max(limit * 4, 40)]
+            .distinct()
         )
 
-        dead: list[Property] = []
-        with ThreadPoolExecutor(max_workers=16) as pool:
-            futures = {}
-            for prop in rows:
+        # Probe more than we need; many preferred URLs are still healthy.
+        probe_budget = max(limit * 4, 200) if limit else 20_000
+        candidates: list[tuple[Property, str]] = []
+        for prop in qs[:probe_budget]:
+            if not TRREB_LISTING_ID_RE.match((prop.listing_id or "").strip()):
+                continue
+            preferred = (getattr(prop, "preferred_media", None) or [None])[0]
+            if preferred is None:
                 preferred = (
                     prop.media.filter(is_preferred=True).order_by("order", "pk").first()
                 )
-                if not preferred or not preferred.media_url:
-                    continue
-                futures[pool.submit(url_ok, preferred.media_url)] = prop
+            if not preferred or not preferred.media_url:
+                continue
+            candidates.append((prop, preferred.media_url))
+
+        dead: list[Property] = []
+        with ThreadPoolExecutor(max_workers=24) as pool:
+            futures = {
+                pool.submit(url_ok, url): prop for prop, url in candidates
+            }
             for future in as_completed(futures):
                 prop = futures[future]
                 if not future.result():
                     dead.append(prop)
-                    if len(dead) >= limit:
+                    if limit and len(dead) >= limit:
                         break
-        return dead[:limit]
+        return dead[:limit] if limit else dead
