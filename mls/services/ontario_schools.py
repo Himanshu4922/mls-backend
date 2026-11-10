@@ -144,3 +144,54 @@ def top_gta_schools(*, limit: int = 4, schools: list[dict] | None = None) -> lis
         ranked.append((score, school.get("name") or "", school))
     ranked.sort(key=lambda item: (-item[0], item[1]))
     return [_public_school(school) for _, _, school in ranked[:limit]]
+
+
+def _normalize_name(value: str) -> str:
+    return " ".join("".join(ch.lower() if ch.isalnum() else " " for ch in (value or "")).split())
+
+
+def search_schools(
+    query: str,
+    *,
+    limit: int = 8,
+    schools: list[dict] | None = None,
+) -> list[dict]:
+    """Name search over the Ministry file for typeahead / homes-near-school."""
+    term = _normalize_name(query)
+    if len(term) < 2:
+        return []
+    tokens = [token for token in term.split() if len(token) > 1]
+    if not tokens:
+        return []
+
+    ranked: list[tuple[float, str, dict]] = []
+    for school in schools if schools is not None else load_schools():
+        lat = school.get("lat")
+        lon = school.get("lon")
+        if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
+            continue
+        name = _normalize_name(school.get("name") or "")
+        city = _normalize_name(school.get("city") or "")
+        board = _normalize_name(school.get("board") or "")
+        hay = f"{name} {city} {board}".strip()
+        if not name or not hay:
+            continue
+        if not all(token in hay for token in tokens):
+            continue
+        score = 0.0
+        if name == term:
+            score = 100.0
+        elif name.startswith(term):
+            score = 90.0
+        elif term in name:
+            score = 80.0
+        else:
+            score = 60.0
+        if (school.get("level") or "").lower() == "secondary":
+            score += 2.0
+        if _GTA["lat_min"] <= lat <= _GTA["lat_max"] and _GTA["lon_min"] <= lon <= _GTA["lon_max"]:
+            score += 1.0
+        ranked.append((score, name, school))
+
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    return [_public_school(school) for _, _, school in ranked[: max(1, min(limit, 20))]]

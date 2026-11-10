@@ -1,6 +1,12 @@
 from django.test import SimpleTestCase
 
-from mls.services.ontario_schools import eqao_percent, load_schools, schools_near, top_gta_schools
+from mls.services.ontario_schools import (
+    eqao_percent,
+    load_schools,
+    schools_near,
+    search_schools,
+    top_gta_schools,
+)
 
 
 def _school(**overrides):
@@ -63,3 +69,12 @@ class OntarioSchoolTests(SimpleTestCase):
         self.assertTrue(named)
         self.assertEqual(named[0]["level"], "Secondary")
         self.assertIsInstance(named[0]["lat"], float)
+
+    def test_search_matches_school_name_tokens(self):
+        schools = [
+            _school(id="1", name="John Fraser Secondary School", city="Mississauga", level="Secondary", g9_math=88, osslt=88),
+            _school(id="2", name="Fraser Public School", city="Toronto", level="Elementary"),
+            _school(id="3", name="Unrelated Academy", city="Oakville", level="Secondary", g9_math=70, osslt=70),
+        ]
+        found = search_schools("fraser secondary", limit=5, schools=schools)
+        self.assertEqual([school["name"] for school in found], ["John Fraser Secondary School"])

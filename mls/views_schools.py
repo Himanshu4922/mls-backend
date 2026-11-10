@@ -4,7 +4,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from mls.services.ontario_schools import SOURCE, schools_near, top_gta_schools
+from mls.services.ontario_schools import SOURCE, schools_near, search_schools, top_gta_schools
 
 
 class SchoolsNearAPIView(APIView):
@@ -45,4 +45,24 @@ class TopSchoolsAPIView(APIView):
         return Response({
             **SOURCE,
             "schools": top_gta_schools(limit=limit),
+        })
+
+
+class SchoolsSearchAPIView(APIView):
+    """GET /api/mls/schools/search/?q=&limit=8"""
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        q = (request.query_params.get("q") or "").strip()
+        if len(q) < 2:
+            return Response({**SOURCE, "schools": []})
+        try:
+            limit = int(request.query_params.get("limit") or 8)
+        except ValueError:
+            return Response({"error": "limit must be a number."}, status=400)
+        limit = min(20, max(1, limit))
+        return Response({
+            **SOURCE,
+            "schools": search_schools(q, limit=limit),
         })

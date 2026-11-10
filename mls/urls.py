@@ -14,7 +14,7 @@ from .views_ai import AIAssistAPIView, AISearchParseAPIView
 from .views_activity import PreconActivityAPIView, StudioActivityAPIView
 from .views_push import PushSubscribeAPIView, PushVapidAPIView
 from .views_properties import PropertyFilterView
-from .views_schools import SchoolsNearAPIView, TopSchoolsAPIView
+from .views_schools import SchoolsNearAPIView, SchoolsSearchAPIView, TopSchoolsAPIView
 from .views_sitemap import SitemapListingKeysView
 from .views_market import (
     CatalogStatsBulkAPIView,
@@ -143,6 +143,7 @@ urlpatterns = [
     path('properties/comapare/', PropertyCompareDetailView.as_view(), name='property_detail_compare'),
     path('schools/near/', SchoolsNearAPIView.as_view(), name='schools-near'),
     path('schools/top/', TopSchoolsAPIView.as_view(), name='schools-top'),
+    path('schools/search/', SchoolsSearchAPIView.as_view(), name='schools-search'),
     path('nearest-school/', NearestSchoolAPIView.as_view(), name='nearest-school'),
     path('nearby-amenities/', NearbyAmenitiesAPIView.as_view(), name='nearby-amenities'),
     path('listing-sync-status/', ListingSyncStatusAPIView.as_view(), name='listing-sync-status'),
