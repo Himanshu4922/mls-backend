@@ -18,6 +18,10 @@ from django.utils.dateparse import parse_date, parse_datetime
 from homepage.services.ampre import RESIDENTIAL_CLAUSE, city_clause
 from mls.models import Property
 from mls.services.ampre_client import AmpreClientError, fetch_property_page
+from mls.services.ampre_media import (
+    is_trreb_property,
+    refresh_property_media_from_ampre,
+)
 from mls.views_market import GTA_CITIES
 
 
@@ -133,6 +137,7 @@ class Command(BaseCommand):
         created = 0
         updated = 0
         fetched = 0
+        media_filled = 0
 
         for city in GTA_CITIES:
             city_filter = city_clause([city])
@@ -190,14 +195,38 @@ class Command(BaseCommand):
                             setattr(existing, field, value)
                         existing.save()
                         updated += 1
+                        prop = existing
                     else:
-                        Property.objects.create(listing_key=ampre_key, **defaults)
+                        prop = Property.objects.create(
+                            listing_key=ampre_key, **defaults
+                        )
                         created += 1
+
+                    # Closed sync historically wrote listing rows with no
+                    # Media, so Sold / De-listed cards showed the house
+                    # placeholder. Pull live AMPRE photos when the gallery
+                    # is empty.
+                    if (
+                        is_trreb_property(prop)
+                        and not prop.media.exists()
+                    ):
+                        try:
+                            written = refresh_property_media_from_ampre(prop)
+                        except AmpreClientError as exc:
+                            self.stderr.write(
+                                self.style.WARNING(
+                                    f"  media skip {prop.listing_id or ampre_key}: {exc}"
+                                )
+                            )
+                            written = 0
+                        if written:
+                            media_filled += 1
 
                 self.stdout.write(f"  {len(rows):,} rows")
 
         self.stdout.write(
             self.style.SUCCESS(
-                f"Done. Fetched {fetched:,}. Created {created:,}, updated {updated:,}."
+                f"Done. Fetched {fetched:,}. Created {created:,}, updated {updated:,}. "
+                f"Filled media for {media_filled:,}."
             )
         )
